@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      23.9
+// @version      24.0
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -1100,7 +1100,26 @@
             }
 
             if (targetBtn && csrfToken) {
-                return await fetchPDFBlob(targetUrl, targetBtn.value, csrfToken, className, timeoutMs);
+                // Extraer todos los campos ocultos del formulario que contiene los botones
+                // para replicar exactamente lo que enviaría el navegador al hacer clic
+                const form = targetBtn.closest('form');
+                const extraFields = {};
+                if (form) {
+                    const hiddenInputs = form.querySelectorAll('input[type="hidden"], input:not([type])');
+                    hiddenInputs.forEach(inp => {
+                        if (inp.name && inp.name !== 'customSheet') {
+                            extraFields[inp.name] = inp.value;
+                        }
+                    });
+                }
+                const result = await fetchPDFBlob(targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields);
+                if (result && result.code === 'PERMANENT_FAILURE_HTML') {
+                    const err = new Error(`PERMANENT_FAILURE_HTML`);
+                    err.code = 'PERMANENT_FAILURE_HTML';
+                    err.className = className;
+                    throw err;
+                }
+                return result;
             } else {
                 console.warn(`⚠️ Plantilla "${sheetName}" no hallada en los botones de ${className}`);
                 const err = new Error(`PERMANENT_FAILURE_SHEET`);
@@ -1117,89 +1136,141 @@
         }
     }
 
-    async function fetchPDFBlob(refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000) {
+    async function fetchPDFBlob(refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000, extraFields = {}) {
         if (cancelDownloadRequested) return null;
 
         const formData = new URLSearchParams();
-        formData.append('quizName', '');
-        formData.append('sortOrder', 'studentId');
         formData.append('customSheet', customSheetValue);
         formData.append('csrf_token', csrfToken);
+        for (const [key, val] of Object.entries(extraFields)) {
+            if (!formData.has(key)) formData.append(key, val);
+        }
+        if (!formData.has('quizName')) formData.append('quizName', '');
+        if (!formData.has('sortOrder')) formData.append('sortOrder', 'studentId');
 
-        // Usar fetch nativo con AbortController para timeout y credentials: 'include'
-        // para enviar cookies de sesión correctamente (GM_xmlhttpRequest a veces no las envía)
+        const bodyStr = formData.toString();
+
+        // Intentar con fetch (credentials: 'include' para cookies de sesión)
+        const result = await attemptFetchPDF(bodyStr, refererUrl, className, timeoutMs);
+        if (result === 'RETRY_GM') {
+            // Fallback: GM_xmlhttpRequest
+            console.warn(`🔄 Reintentando con GM_xmlhttpRequest para ${className}...`);
+            return await attemptGMXHRPDF(bodyStr, refererUrl, className, timeoutMs);
+        }
+        return result;
+    }
+
+    async function attemptFetchPDF(bodyStr, refererUrl, className, timeoutMs) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const response = await fetch("https://www.zipgrade.com/forms/packs.pdf", {
+            const resp = await fetch("https://www.zipgrade.com/forms/packs.pdf", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Referer": refererUrl,
                     "Origin": "https://www.zipgrade.com"
                 },
-                body: formData.toString(),
+                body: bodyStr,
                 credentials: 'include',
                 signal: controller.signal
             });
-
             clearTimeout(timeoutId);
 
-            if (!response.ok) {
-                console.warn(`⚠️ HTTP ${response.status} al solicitar PDF de ${className}`);
+            if (!resp.ok) {
+                console.warn(`⚠️ fetch HTTP ${resp.status} para ${className}`);
                 return null;
             }
 
-            const blob = await response.blob();
-
-            if (!(blob instanceof Blob) || blob.size === 0) {
-                console.warn(`⚠️ Respuesta vacía para ${className}`);
-                return null;
-            }
-
-            if (blob.size <= 500) {
-                console.warn(`⚠️ PDF demasiado pequeño (${blob.size} bytes) para ${className}`);
-                return null;
-            }
-
-            // Verificar magic bytes para distinguir PDF real de HTML
-            try {
-                const headerText = await blob.slice(0, 50).text();
-                if (headerText.startsWith("%PDF")) {
-                    return blob;
-                }
-                if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
-                    console.warn(`⚠️ Servidor devolvió HTML en vez de PDF para ${className}`);
-                    // Leer más del HTML para identificar la página
-                    const fullPreview = await blob.slice(0, 800).text();
-                    console.warn(`🔍 HTML recibido (status ${response.status}): ${fullPreview.replace(/\s+/g, ' ').trim().substring(0, 300)}`);
-                    // Extraer el title si existe
-                    const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
-                    if (titleMatch) {
-                        console.warn(`📄 Título de página: "${titleMatch[1].trim()}"`);
-                    }
-                    const err = new Error(`PERMANENT_FAILURE_HTML`);
-                    err.code = 'PERMANENT_FAILURE_HTML';
-                    err.className = className;
-                    throw err;
-                }
-            } catch (e) {
-                if (e.code === 'PERMANENT_FAILURE_HTML') throw e;
-                // Si falla al leer cabeceras, intentar devolver el blob igual
-                console.warn(`⚠️ No se pudo verificar cabecera del PDF de ${className}: ${e.message}`);
-            }
-            return blob;
+            const blob = await resp.blob();
+            return validatePDFBlob(blob, className, resp.status);
         } catch (err) {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
-                console.warn(`⚠️ Timeout (${timeoutMs/1000}s) al solicitar PDF de ${className}`);
-                return null;
+                console.warn(`⚠️ fetch timeout (${timeoutMs/1000}s) para ${className}`);
+                return 'RETRY_GM';
             }
-            if (err.code === 'PERMANENT_FAILURE_HTML') throw err;
-            console.warn(`⚠️ Error fetch PDF para ${className}:`, err.message);
+            console.warn(`⚠️ fetch error para ${className}: ${err.message}`);
+            return 'RETRY_GM';
+        }
+    }
+
+    async function attemptGMXHRPDF(bodyStr, refererUrl, className, timeoutMs) {
+        return new Promise(resolve => {
+            if (typeof GM_xmlhttpRequest === 'undefined') {
+                resolve(null);
+                return;
+            }
+
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (!settled) { settled = true; resolve(null); }
+            }, timeoutMs);
+
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: "https://www.zipgrade.com/forms/packs.pdf",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": refererUrl,
+                    "Origin": "https://www.zipgrade.com"
+                },
+                data: bodyStr,
+                anonymous: false,
+                responseType: 'blob',
+                onload: async (res) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+
+                    let blob = res.response;
+                    if (blob instanceof ArrayBuffer) {
+                        blob = new Blob([blob], { type: 'application/pdf' });
+                    }
+                    if (!(blob instanceof Blob) || blob.size === 0) {
+                        resolve(null);
+                        return;
+                    }
+                    const validated = await validatePDFBlob(blob, className, res.status);
+                    resolve(validated);
+                },
+                onerror: () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(null);
+                },
+                ontimeout: () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(null);
+                }
+            });
+        });
+    }
+
+    async function validatePDFBlob(blob, className, statusCode) {
+        if (!(blob instanceof Blob) || blob.size === 0) return null;
+        if (blob.size <= 500) {
+            console.warn(`⚠️ PDF muy pequeño (${blob.size}B) para ${className}`);
             return null;
         }
+        try {
+            const headerText = await blob.slice(0, 50).text();
+            if (headerText.startsWith("%PDF")) return blob;
+
+            if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
+                console.warn(`⚠️ HTML en vez de PDF para ${className}`);
+                const fullPreview = await blob.slice(0, 1200).text();
+                console.warn(`🔍 HTML (status ${statusCode}): ${fullPreview.replace(/\s+/g, ' ').trim().substring(0, 300)}`);
+                const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
+                if (titleMatch) console.warn(`📄 Título: "${titleMatch[1].trim()}"`);
+                return { code: 'PERMANENT_FAILURE_HTML' };
+            }
+        } catch (e) { }
+        return blob;
     }
 
     // Auto-inicialización según URL
