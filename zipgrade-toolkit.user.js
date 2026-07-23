@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.5
+// @version      24.6
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -1094,44 +1094,61 @@
     }
 
     // Reintentos automáticos con Backoff Adaptativo y recuperación de límite de velocidad
-    async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 3) {
-        const retryDelays = [6000, 10000, 15000];
-        const timeouts = [45000, 60000, 90000];
+    async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 4) {
+        const retryDelays = [8000, 12000, 18000];
+        const timeouts = [45000, 60000, 90000, 90000];
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             if (cancelDownloadRequested) return null;
 
-            const timeoutForAttempt = timeouts[attempt - 1] || 60000;
+            const timeoutForAttempt = timeouts[attempt - 1] || 90000;
             console.log(`🔄 Obteniendo ${className} (Intento ${attempt}/${maxRetries}, Timeout: ${timeoutForAttempt / 1000}s)...`);
 
             if (attempt > 1) {
                 updateStatusText(`Reintentando ${currentIdx}/${totalIdx}: ${className} (Intento ${attempt}/${maxRetries})...`);
             }
 
+            let result;
             try {
-                const pdfBlob = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
-                if (pdfBlob && !(pdfBlob.code)) return pdfBlob;
-
-                const waitTime = retryDelays[attempt - 1] || 6000;
-                console.warn(`⚠️ Intento ${attempt}/${maxRetries} no retornó PDF para ${className}. Esperando ${waitTime / 1000}s para reintentar...`);
-                await new Promise(r => setTimeout(r, waitTime));
+                result = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
             } catch (err) {
+                // Solo SESSION y SHEET son irrecuperables
                 if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
-                    console.warn(`⏭️ Error permanente en ${className}: ${err.code}. Omitiendo reintentos.`);
-                    updateStatusText(`⏭️ ${className} omitido (error permanente)`);
+                    console.warn(`⏭️ Error irrecuperable en ${className}: ${err.code}. Omitiendo.`);
+                    updateStatusText(`⏭️ ${className} omitido (${err.code})`);
                     return null;
                 }
+                // Cualquier otro error de red/timeout — tratar como reintentable
+                console.warn(`⚠️ Error de red en intento ${attempt}/${maxRetries} para ${className}: ${err.message}`);
+                result = null;
+            }
 
-                // RATE_LIMIT_HTML o PERMANENT_FAILURE_HTML: El servidor redirigió temporalmente por peticiones rápidas
-                const waitTime = retryDelays[attempt - 1] || 6000;
-                console.warn(`⚠️ El servidor redirigió (posible límite de velocidad) en intento ${attempt}/${maxRetries} para ${className}. Pausando ${waitTime / 1000}s para recuperar la conexión...`);
-                updateStatusText(`Pausa de recuperación (${waitTime / 1000}s) para ${className}...`);
+            // Éxito: retornar blob válido
+            if (result instanceof Blob) return result;
 
-                if (attempt < maxRetries && !cancelDownloadRequested) {
-                    await new Promise(r => setTimeout(r, waitTime));
+            // Resultado con código de error (ej: RATE_LIMIT_HTML, PERMANENT_FAILURE_SESSION)
+            if (result && result.code) {
+                if (result.code === 'PERMANENT_FAILURE_SESSION') {
+                    console.warn(`⏭️ Sesión expirada para ${className}. Omitiendo.`);
+                    return null;
                 }
+                // RATE_LIMIT_HTML u otro código HTML — reintentable con pausa
+                const waitTime = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+                console.warn(`⚠️ Servidor devolvió HTML (${result.code}) en intento ${attempt}/${maxRetries} para ${className}. Pausando ${waitTime / 1000}s para recuperar...`);
+                updateStatusText(`🔄 Recuperando (${waitTime / 1000}s) ${className} (intento ${attempt}/${maxRetries})...`);
+                if (!cancelDownloadRequested) await new Promise(r => setTimeout(r, waitTime));
+                continue;
+            }
+
+            // null o resultado vacío: reintentable
+            if (attempt < maxRetries && !cancelDownloadRequested) {
+                const waitTime = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+                console.warn(`⚠️ Sin PDF en intento ${attempt}/${maxRetries} para ${className}. Reintentando en ${waitTime / 1000}s...`);
+                await new Promise(r => setTimeout(r, waitTime));
             }
         }
+
+        console.error(`❌ Todos los intentos agotados para ${className}. Omitido.`);
         return null;
     }
 
@@ -1212,8 +1229,6 @@
             }
 
             if (targetBtn && csrfToken) {
-                // Extraer todos los campos ocultos del formulario que contiene los botones
-                // para replicar exactamente lo que enviaría el navegador al hacer clic
                 const form = targetBtn.closest('form');
                 const extraFields = {};
                 let formActionUrl = targetUrl;
@@ -1229,20 +1244,13 @@
                     });
                 }
 
-                // Intento 1: POST a la URL de acción del formulario o targetUrl de la clase
                 let result = await fetchPDFBlob(formActionUrl, targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
 
-                // Intento 2: Si devolvió HTML y la URL probada no era /forms/packs.pdf, probar /forms/packs.pdf
-                if (result && result.code === 'PERMANENT_FAILURE_HTML' && formActionUrl !== "https://www.zipgrade.com/forms/packs.pdf") {
-                    console.warn(`🔄 Reintentando POST alternativo a /forms/packs.pdf para ${className}...`);
-                    result = await fetchPDFBlob("https://www.zipgrade.com/forms/packs.pdf", targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
-                }
-
-                if (result && result.code === 'PERMANENT_FAILURE_HTML') {
-                    const err = new Error(`PERMANENT_FAILURE_HTML`);
-                    err.code = 'PERMANENT_FAILURE_HTML';
-                    err.className = className;
-                    throw err;
+                // Si el primer intento devolvió HTML (RATE_LIMIT_HTML), no lanzar excepción:
+                // devolver el objeto directamente para que processSingleDownloadWithRetry reintente
+                if (result && result.code) {
+                    console.warn(`⚠️ [${className}] Servidor devolvió HTML en lugar de PDF (código: ${result.code}). Se reintentará desde el nivel superior.`);
+                    return result; // NO throw — dejar que el reintento superior maneje esto
                 }
                 return result;
             } else {
@@ -1253,7 +1261,7 @@
                 throw err;
             }
         } catch (err) {
-            if (err.code === 'PERMANENT_FAILURE_HTML' || err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+            if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
                 throw err;
             }
             console.error(`❌ Error leyendo página de ${className}:`, err);
