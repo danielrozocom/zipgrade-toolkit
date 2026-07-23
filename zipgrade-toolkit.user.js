@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      23.3
+// @version      23.4
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -872,39 +872,50 @@
 
         if (successCount > 0 && !cancelDownloadRequested) {
             console.log(`📂 Generando archivo ZIP con ${successCount} PDFs...`);
-            updateStatusText(`Comprimiendo ${successCount} archivos en ZIP...`);
-            btnDownload.innerText = 'Comprimiendo ZIP...';
+            updateStatusText(`Empaquetando ${successCount} archivos en ZIP...`);
+            btnDownload.innerText = 'Empaquetando ZIP...';
 
-            setProgressBar(85, 'Comprimiendo archivos en ZIP...');
+            setProgressBar(90, 'Generando archivo ZIP...');
 
-            const content = await zip.generateAsync({
-                type: "blob",
-                compression: "DEFLATE",
-                compressionOptions: { level: 6 }
-            }, function updateCallback(metadata) {
-                const zipPercent = 85 + (metadata.percent * 0.15); // 85% a 100%
-                setProgressBar(zipPercent, `Generando ZIP: ${metadata.percent.toFixed(0)}%`);
-            });
+            try {
+                let lastPercent = -1;
+                const content = await zip.generateAsync({
+                    type: "blob",
+                    compression: "STORE"
+                }, function updateCallback(metadata) {
+                    const currentPercent = Math.floor(metadata.percent);
+                    if (currentPercent !== lastPercent && currentPercent % 5 === 0) {
+                        lastPercent = currentPercent;
+                        const zipPercent = 90 + (currentPercent * 0.10);
+                        setProgressBar(zipPercent, `Generando ZIP: ${currentPercent}%`);
+                    }
+                });
 
-            const zipFilename = `ZipGrade_Lote_${session}.zip`;
+                setProgressBar(100, '¡ZIP listo!');
+                const zipFilename = `ZipGrade_Lote_${session}.zip`;
 
-            // Intento 1: Descarga automática
-            triggerFileDownload(content, zipFilename);
+                // Intento 1: Descarga automática
+                triggerFileDownload(content, zipFilename);
 
-            // Intento 2: Banner de Descarga Directa visible en la UI por si el navegador bloqueó la descarga automática
-            const zipUrl = URL.createObjectURL(content);
-            if (bannerEl) {
-                bannerEl.style.display = 'flex';
-                const directLink = document.getElementById('zg-btn-direct-download');
-                if (directLink) {
-                    directLink.href = zipUrl;
-                    directLink.download = zipFilename;
+                // Intento 2: Banner de Descarga Directa visible en la UI por si el navegador bloqueó la descarga automática
+                const zipUrl = URL.createObjectURL(content);
+                if (bannerEl) {
+                    bannerEl.style.display = 'flex';
+                    const directLink = document.getElementById('zg-btn-direct-download');
+                    if (directLink) {
+                        directLink.href = zipUrl;
+                        directLink.download = zipFilename;
+                    }
                 }
-            }
 
-            console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
-            updateStatusText(`🎉 ¡ZIP generado con ${successCount} de ${queue.length} archivos!`);
-            alert(`¡ZIP generado con éxito con ${successCount} de ${queue.length} archivos PDF!`);
+                console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
+                updateStatusText(`🎉 ¡ZIP listo con ${successCount} de ${queue.length} archivos!`);
+                alert(`¡ZIP generado con éxito con ${successCount} de ${queue.length} archivos PDF!`);
+            } catch (zipErr) {
+                console.error("❌ Error al generar archivo ZIP:", zipErr);
+                updateStatusText('❌ Error al generar el archivo ZIP.');
+                alert(`Error al generar el archivo ZIP: ${zipErr.message || zipErr}`);
+            }
         } else if (!cancelDownloadRequested) {
             console.error("❌ No se pudo obtener ningún PDF válido.");
             updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
