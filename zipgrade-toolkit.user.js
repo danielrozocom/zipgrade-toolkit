@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.4
-// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados y código de estudiante (menor a mayor) en /classes/ y /students/.
+// @version      24.5
+// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -1018,14 +1018,22 @@
                 consecutiveErrors++;
             }
 
-            // Pausa adaptativa entre descargas: aumenta si hay errores consecutivos
+            // Pausa adaptativa entre descargas y pausa preventiva de enfriamiento cada 4 descargas
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                let pause = individualMode ? 2000 : 1500;
-                if (consecutiveErrors > 0) {
-                    pause = Math.min(8000, pause + (consecutiveErrors * 2000));
-                    console.warn(`⏱️ ${consecutiveErrors} error(es) consecutivo(s) — pausa extendida a ${pause/1000}s`);
+                let pause = individualMode ? 3000 : 2500;
+
+                // Pausa preventiva de enfriamiento cada 4 descargas exitosas para prevenir límites del servidor
+                if (successCount > 0 && successCount % 4 === 0 && consecutiveErrors === 0) {
+                    console.log(`⏱️ Pausa de enfriamiento preventivo (4s) tras ${successCount} descargas para liberar límites en servidor ZipGrade...`);
+                    updateStatusText(`Enfriamiento preventivo (4s) tras ${successCount} descargas...`);
+                    await new Promise(r => setTimeout(r, 4000));
                 }
-                console.log(`⏱️ Pausa de ${pause/1000}s antes de la siguiente descarga...`);
+
+                if (consecutiveErrors > 0) {
+                    pause = Math.min(10000, pause + (consecutiveErrors * 3000));
+                    console.warn(`⏱️ ${consecutiveErrors} error(es) consecutivo(s) — pausa extendida a ${pause / 1000}s`);
+                }
+                console.log(`⏱️ Pausa de ${pause / 1000}s antes de la siguiente descarga...`);
                 await new Promise(r => setTimeout(r, pause));
             }
         }
@@ -1085,9 +1093,9 @@
         btnDownload.disabled = false;
     }
 
-    // Reintentos automáticos con Backoff Adaptativo (Timeout 45s/60s/90s)
+    // Reintentos automáticos con Backoff Adaptativo y recuperación de límite de velocidad
     async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 3) {
-        const retryDelays = [4000, 7000, 10000];
+        const retryDelays = [6000, 10000, 15000];
         const timeouts = [45000, 60000, 90000];
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1102,21 +1110,25 @@
 
             try {
                 const pdfBlob = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
-                if (pdfBlob) return pdfBlob;
+                if (pdfBlob && !(pdfBlob.code)) return pdfBlob;
 
-                // Si llegamos aquí sin error, la petición no dio blob pero tampoco hay error permanente
-                const waitTime = retryDelays[attempt - 1] || 5000;
-                console.warn(`⚠️ Intento ${attempt}/${maxRetries} fallido para ${className}. Esperando ${waitTime / 1000}s...`);
+                const waitTime = retryDelays[attempt - 1] || 6000;
+                console.warn(`⚠️ Intento ${attempt}/${maxRetries} no retornó PDF para ${className}. Esperando ${waitTime / 1000}s para reintentar...`);
                 await new Promise(r => setTimeout(r, waitTime));
             } catch (err) {
-                if (err.code === 'PERMANENT_FAILURE_HTML' || err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+                if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
                     console.warn(`⏭️ Error permanente en ${className}: ${err.code}. Omitiendo reintentos.`);
                     updateStatusText(`⏭️ ${className} omitido (error permanente)`);
                     return null;
                 }
-                console.error(`❌ Error transitorio en intento ${attempt} para ${className}:`, err);
+
+                // RATE_LIMIT_HTML o PERMANENT_FAILURE_HTML: El servidor redirigió temporalmente por peticiones rápidas
+                const waitTime = retryDelays[attempt - 1] || 6000;
+                console.warn(`⚠️ El servidor redirigió (posible límite de velocidad) en intento ${attempt}/${maxRetries} para ${className}. Pausando ${waitTime / 1000}s para recuperar la conexión...`);
+                updateStatusText(`Pausa de recuperación (${waitTime / 1000}s) para ${className}...`);
+
                 if (attempt < maxRetries && !cancelDownloadRequested) {
-                    await new Promise(r => setTimeout(r, 4000));
+                    await new Promise(r => setTimeout(r, waitTime));
                 }
             }
         }
@@ -1377,12 +1389,17 @@
             if (headerText.startsWith("%PDF")) return blob;
 
             if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
-                console.warn(`⚠️ HTML en vez de PDF para ${className}`);
                 const fullPreview = await blob.slice(0, 1200).text();
-                console.warn(`🔍 HTML (status ${statusCode}): ${fullPreview.replace(/\s+/g, ' ').trim().substring(0, 300)}`);
                 const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
-                if (titleMatch) console.warn(`📄 Título: "${titleMatch[1].trim()}"`);
-                return { code: 'PERMANENT_FAILURE_HTML' };
+                const title = titleMatch ? titleMatch[1].trim() : '';
+
+                if (title.toLowerCase().includes('login') || fullPreview.includes('name="login"')) {
+                    console.warn(`⚠️ Sesión expirada al validar PDF para ${className}`);
+                    return { code: 'PERMANENT_FAILURE_SESSION' };
+                }
+
+                console.warn(`⚠️ El servidor devolvió HTML (Título: "${title}") en lugar de PDF para ${className}. Posible límite de velocidad.`);
+                return { code: 'RATE_LIMIT_HTML' };
             }
         } catch (e) { }
         return blob;
