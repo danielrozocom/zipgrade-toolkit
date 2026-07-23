@@ -470,8 +470,12 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <button id="zg-btn-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
-                                📦 Descargar Seleccionados en ZIP
+                                📦 Descargar
                             </button>
+                            <label style="display:flex; align-items:center; gap:4px; font-size:11px; font-weight:500; color:#475569; cursor:pointer; user-select:none;">
+                                <input type="checkbox" id="zg-mode-individual" style="margin:0; cursor:pointer;" />
+                                Individual (sin ZIP)
+                            </label>
                             <button id="zg-btn-stop-download" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
                                 🛑 Detener
                             </button>
@@ -797,7 +801,11 @@
     // 8. MOTOR DE EMPAQUETADO EN ZIP
     // ==========================================
     async function downloadSelectedAsZip() {
-        await loadJSZip();
+        const individualMode = document.getElementById('zg-mode-individual')?.checked ?? false;
+
+        if (!individualMode) {
+            await loadJSZip();
+        }
 
         const session = document.getElementById('zg-global-session').value;
         const checkedBoxes = Array.from(document.querySelectorAll('.zg-row-check:checked'));
@@ -819,7 +827,8 @@
             return;
         }
 
-        console.log(`🚀 [ZipGrade] Iniciando lote con ${queue.length} cursos (Sesión ${session})...`);
+        const modeLabel = individualMode ? 'individual' : 'ZIP';
+        console.log(`🚀 [ZipGrade] Iniciando lote ${modeLabel} con ${queue.length} cursos (Sesión ${session})...`);
         const btnDownload = document.getElementById('zg-btn-download-selected');
         const btnStop = document.getElementById('zg-btn-stop-download');
         const bannerEl = document.getElementById('zg-download-banner');
@@ -835,7 +844,7 @@
             btnStop.innerText = '🛑 Detener';
         }
 
-        const zip = new JSZip();
+        const zip = !individualMode ? new JSZip() : null;
         let successCount = 0;
 
         for (let i = 0; i < queue.length; i++) {
@@ -848,10 +857,10 @@
 
             const item = queue[i];
             const currentNum = i + 1;
-            const progressPercent = ((i) / queue.length) * 80; // 0% a 80% reservado para descarga de PDFs
+            const progressPercent = ((i) / queue.length) * (individualMode ? 90 : 80);
 
             console.log(`--------------------------------------------------`);
-            console.log(`📦 [Lote ${currentNum}/${queue.length}] Curso: ${item.className} (ID: ${item.classId})`);
+            console.log(`📦 [${modeLabel.toUpperCase()} ${currentNum}/${queue.length}] Curso: ${item.className} (ID: ${item.classId})`);
 
             setProgressBar(progressPercent, `Descargando PDF ${currentNum}/${queue.length}: ${item.className}`);
             updateStatusText(`Descargando ${currentNum}/${queue.length}: ${item.className}...`);
@@ -860,53 +869,71 @@
             const pdfBlob = await processSingleDownloadWithRetry(item.classId, item.className, item.sheetName, session, currentNum, queue.length);
 
             if (pdfBlob) {
-                zip.file(`${item.className}_${session}.pdf`, pdfBlob);
+                const filename = `${item.className}_${session}.pdf`;
+                if (individualMode) {
+                    downloadBlob(pdfBlob, filename);
+                    console.log(`📥 [Individual] PDF de ${item.className} descargado.`);
+                } else {
+                    zip.file(filename, pdfBlob);
+                    console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${pdfBlob.size} bytes).`);
+                }
                 successCount++;
-                console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${pdfBlob.size} bytes).`);
+
+                // En modo individual, pausa extra para que el navegador procese la descarga
+                if (individualMode) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
             } else {
-                console.error(`❌ [ZIP] No se pudo obtener PDF válido para "${item.className}". Omitido (sesión expirada o plantilla incorrecta).`);
+                console.error(`❌ No se pudo obtener PDF válido para "${item.className}". Omitido.`);
                 updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
             }
 
             // Pausa breve entre descargas para evitar sobrecargar el servidor
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                console.log(`⏱️ Pausa de 1.5s antes de la siguiente descarga...`);
-                await new Promise(r => setTimeout(r, 1500));
+                const pause = individualMode ? 2000 : 1500;
+                console.log(`⏱️ Pausa de ${pause/1000}s antes de la siguiente descarga...`);
+                await new Promise(r => setTimeout(r, pause));
             }
         }
 
         if (successCount > 0 && !cancelDownloadRequested) {
-            console.log(`📂 Generando archivo ZIP con ${successCount} PDFs...`);
-            updateStatusText(`Empaquetando ${successCount} archivos en ZIP...`);
-            btnDownload.innerText = 'Empaquetando ZIP...';
+            if (individualMode) {
+                setProgressBar(100, '¡Descargas individuales completadas!');
+                updateStatusText(`✅ ${successCount} de ${queue.length} PDFs descargados individualmente.`);
+                console.log(`🎉 [ZipGrade] ${successCount} PDFs descargados individualmente.`);
+            } else {
+                console.log(`📂 Generando archivo ZIP con ${successCount} PDFs...`);
+                updateStatusText(`Empaquetando ${successCount} archivos en ZIP...`);
+                btnDownload.innerText = 'Empaquetando ZIP...';
 
-            setProgressBar(90, 'Generando archivo ZIP...');
+                setProgressBar(90, 'Generando archivo ZIP...');
 
-            try {
-                let lastPercent = -1;
-                const content = await zip.generateAsync({
-                    type: "blob",
-                    compression: "STORE"
-                }, function updateCallback(metadata) {
-                    const currentPercent = Math.floor(metadata.percent);
-                    if (currentPercent !== lastPercent && currentPercent % 5 === 0) {
-                        lastPercent = currentPercent;
-                        const zipPercent = 90 + (currentPercent * 0.10);
-                        setProgressBar(zipPercent, `Generando ZIP: ${currentPercent}%`);
-                    }
-                });
+                try {
+                    let lastPercent = -1;
+                    const content = await zip.generateAsync({
+                        type: "blob",
+                        compression: "STORE"
+                    }, function updateCallback(metadata) {
+                        const currentPercent = Math.floor(metadata.percent);
+                        if (currentPercent !== lastPercent && currentPercent % 5 === 0) {
+                            lastPercent = currentPercent;
+                            const zipPercent = 90 + (currentPercent * 0.10);
+                            setProgressBar(zipPercent, `Generando ZIP: ${currentPercent}%`);
+                        }
+                    });
 
-                setProgressBar(100, '¡ZIP listo!');
-                const zipFilename = `ZipGrade_Lote_${session}.zip`;
+                    setProgressBar(100, '¡ZIP listo!');
+                    const zipFilename = `ZipGrade_Lote_${session}.zip`;
 
-                triggerDownloadWithBanner(content, zipFilename);
+                    triggerDownloadWithBanner(content, zipFilename);
 
-                console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
-                updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos! Haz clic en "Descargar ZIP Ahora" si no inició solo.`);
-            } catch (zipErr) {
-                console.error("❌ Error al generar archivo ZIP:", zipErr);
-                updateStatusText('❌ Error al generar el archivo ZIP.');
-                alert(`Error al generar el archivo ZIP: ${zipErr.message || zipErr}`);
+                    console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
+                    updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos! Haz clic en "Descargar ZIP Ahora" si no inició solo.`);
+                } catch (zipErr) {
+                    console.error("❌ Error al generar archivo ZIP:", zipErr);
+                    updateStatusText('❌ Error al generar el archivo ZIP.');
+                    alert(`Error al generar el archivo ZIP: ${zipErr.message || zipErr}`);
+                }
             }
         } else if (!cancelDownloadRequested) {
             console.error("❌ No se pudo obtener ningún PDF válido.");
@@ -920,7 +947,7 @@
             btnStop.style.display = 'none';
         }
 
-        btnDownload.innerText = '📦 Descargar Seleccionados en ZIP';
+        btnDownload.innerText = '📦 Descargar Seleccionados';
         btnDownload.disabled = false;
     }
 
@@ -962,6 +989,26 @@
         return null;
     }
 
+    function extractCSRFToken(doc) {
+        // Probar múltiples selectores comunes de CSRF token
+        const selectores = [
+            'input[name="csrf_token"]',
+            'input[name="csrfmiddlewaretoken"]',
+            'input[name="_token"]',
+            'input[name="authenticity_token"]',
+            'meta[name="csrf-token"]',
+            'input[name="csrf"]'
+        ];
+        for (const sel of selectores) {
+            const el = doc.querySelector(sel);
+            if (el) {
+                const val = el.getAttribute('content') || el.value;
+                if (val) return val;
+            }
+        }
+        return '';
+    }
+
     async function processSingleDownloadToZip(classId, className, sheetName, session, timeoutMs = 45000) {
         if (cancelDownloadRequested) return null;
 
@@ -976,12 +1023,17 @@
             if (res.status !== 200) return null;
 
             const doc = new DOMParser().parseFromString(res.responseText, "text/html");
-            const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
+            const csrfToken = extractCSRFToken(doc);
             const buttons = Array.from(doc.querySelectorAll('button[name="customSheet"]'));
 
             // Detectar si la sesión expiró (página de login)
             if (doc.querySelector('input[name="login"]') || doc.querySelector('form[action*="login"]') || !csrfToken) {
                 console.warn(`⚠️ Sesión expirada o no autenticado al acceder a ${className}.`);
+                if (!csrfToken) {
+                    // Log para depuración: mostrar parte del HTML recibido
+                    const preview = res.responseText?.substring(0, 300) || '(sin contenido)';
+                    console.warn(`🔍 HTML recibido (inicio): ${preview}`);
+                }
                 const err = new Error(`PERMANENT_FAILURE_SESSION`);
                 err.code = 'PERMANENT_FAILURE_SESSION';
                 err.className = className;
@@ -1040,52 +1092,75 @@
         formData.append('customSheet', customSheetValue);
         formData.append('csrf_token', csrfToken);
 
-        const res = await customRequest({
-            method: "POST",
-            url: "https://www.zipgrade.com/forms/packs.pdf",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": refererUrl,
-                "Origin": "https://www.zipgrade.com"
-            },
-            data: formData.toString(),
-            responseType: 'blob'
-        }, timeoutMs);
+        // Usar fetch nativo con AbortController para timeout y credentials: 'include'
+        // para enviar cookies de sesión correctamente (GM_xmlhttpRequest a veces no las envía)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-        if (res.status !== 200 || !res.response) {
-            return null;
-        }
-
-        let blob = res.response;
-        if (blob instanceof ArrayBuffer) {
-            blob = new Blob([blob], { type: 'application/pdf' });
-        }
-
-        if (!(blob instanceof Blob)) return null;
-
-        const blobSize = blob.size;
-        if (blobSize <= 500) {
-            console.warn(`⚠️ PDF demasiado pequeño (${blobSize} bytes) para ${className}`);
-            return null;
-        }
-
-        // Verificar magic bytes para distinguir PDF real de HTML
         try {
-            const headerText = await blob.slice(0, 50).text();
-            if (headerText.startsWith("%PDF")) {
-                return blob;
+            const response = await fetch("https://www.zipgrade.com/forms/packs.pdf", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": refererUrl,
+                    "Origin": "https://www.zipgrade.com"
+                },
+                body: formData.toString(),
+                credentials: 'include',
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                console.warn(`⚠️ HTTP ${response.status} al solicitar PDF de ${className}`);
+                return null;
             }
-            if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
-                console.warn(`⚠️ Servidor devolvió HTML en vez de PDF para ${className}`);
-                const err = new Error(`PERMANENT_FAILURE_HTML`);
-                err.code = 'PERMANENT_FAILURE_HTML';
-                err.className = className;
-                throw err;
+
+            const blob = await response.blob();
+
+            if (!(blob instanceof Blob) || blob.size === 0) {
+                console.warn(`⚠️ Respuesta vacía para ${className}`);
+                return null;
             }
-        } catch (e) {
-            if (e.code === 'PERMANENT_FAILURE_HTML') throw e;
+
+            if (blob.size <= 500) {
+                console.warn(`⚠️ PDF demasiado pequeño (${blob.size} bytes) para ${className}`);
+                return null;
+            }
+
+            // Verificar magic bytes para distinguir PDF real de HTML
+            try {
+                const headerText = await blob.slice(0, 50).text();
+                if (headerText.startsWith("%PDF")) {
+                    return blob;
+                }
+                if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
+                    console.warn(`⚠️ Servidor devolvió HTML en vez de PDF para ${className}`);
+                    // Mostrar preview del HTML para depuración
+                    const preview = headerText + (await blob.slice(50, 250).text());
+                    console.warn(`🔍 HTML recibido (inicio): ${preview.replace(/\s+/g, ' ').trim().substring(0, 200)}`);
+                    const err = new Error(`PERMANENT_FAILURE_HTML`);
+                    err.code = 'PERMANENT_FAILURE_HTML';
+                    err.className = className;
+                    throw err;
+                }
+            } catch (e) {
+                if (e.code === 'PERMANENT_FAILURE_HTML') throw e;
+                // Si falla al leer cabeceras, intentar devolver el blob igual
+                console.warn(`⚠️ No se pudo verificar cabecera del PDF de ${className}: ${e.message}`);
+            }
+            return blob;
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                console.warn(`⚠️ Timeout (${timeoutMs/1000}s) al solicitar PDF de ${className}`);
+                return null;
+            }
+            if (err.code === 'PERMANENT_FAILURE_HTML') throw err;
+            console.warn(`⚠️ Error fetch PDF para ${className}:`, err.message);
+            return null;
         }
-        return blob;
     }
 
     // Auto-inicialización según URL
