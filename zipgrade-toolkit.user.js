@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      23.4
+// @version      23.5
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -294,7 +294,7 @@
     // ==========================================
     function ensureAllEntriesShown() {
         console.log("🔍 [ZipGrade] Ajustando 'Show entries' a 'All'...");
-        
+
         // 1. Vía jQuery DataTables API si existe
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.dataTable) {
             try {
@@ -311,10 +311,10 @@
         // 2. Vía DOM en los desplegables de DataTables (_length)
         const lengthSelects = document.querySelectorAll('select[name*="_length"], .dataTables_length select, select[name*="length"]');
         lengthSelects.forEach(select => {
-            let allOption = Array.from(select.options).find(opt => 
-                opt.value === '-1' || 
-                opt.value === 'all' || 
-                opt.text.toLowerCase().includes('all') || 
+            let allOption = Array.from(select.options).find(opt =>
+                opt.value === '-1' ||
+                opt.value === 'all' ||
+                opt.text.toLowerCase().includes('all') ||
                 opt.text.toLowerCase().includes('todo')
             );
 
@@ -857,16 +857,14 @@
                 successCount++;
                 console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${pdfBlob.size} bytes).`);
             } else {
-                console.error(`❌ [ZIP] No se pudo obtener un PDF válido para ${item.className}. Omitido.`);
+                console.error(`❌ [ZIP] No se pudo obtener PDF válido para "${item.className}". Omitido (sesión expirada o plantilla incorrecta).`);
+                updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
             }
 
-            // Pausa constante adaptativa de 4 segundos entre descargas para evitar bloqueos del servidor
+            // Pausa breve entre descargas para evitar sobrecargar el servidor
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                console.log(`⏱️ Pausa de seguridad de 4 segundos antes de la siguiente petición...`);
-                for (let ms = 0; ms < 4000; ms += 500) {
-                    if (cancelDownloadRequested) break;
-                    await new Promise(r => setTimeout(r, 500));
-                }
+                console.log(`⏱️ Pausa de 1.5s antes de la siguiente descarga...`);
+                await new Promise(r => setTimeout(r, 1500));
             }
         }
 
@@ -951,11 +949,17 @@
                 const pdfBlob = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
                 if (pdfBlob) return pdfBlob;
 
+                // Si llegamos aquí sin error, la petición no dio blob pero tampoco hay error permanente
                 const waitTime = retryDelays[attempt - 1] || 5000;
-                console.warn(`⚠️ Intento ${attempt}/${maxRetries} rehusado o fallido para ${className}. Esperando ${waitTime / 1000}s...`);
+                console.warn(`⚠️ Intento ${attempt}/${maxRetries} fallido para ${className}. Esperando ${waitTime / 1000}s...`);
                 await new Promise(r => setTimeout(r, waitTime));
             } catch (err) {
-                console.error(`❌ Error en intento ${attempt} para ${className}:`, err);
+                if (err.code === 'PERMANENT_FAILURE_HTML' || err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+                    console.warn(`⏭️ Error permanente en ${className}: ${err.code}. Omitiendo reintentos.`);
+                    updateStatusText(`⏭️ ${className} omitido (error permanente)`);
+                    return null;
+                }
+                console.error(`❌ Error transitorio en intento ${attempt} para ${className}:`, err);
                 if (attempt < maxRetries && !cancelDownloadRequested) {
                     await new Promise(r => setTimeout(r, 4000));
                 }
@@ -980,6 +984,15 @@
             const doc = new DOMParser().parseFromString(res.responseText, "text/html");
             const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
             const buttons = Array.from(doc.querySelectorAll('button[name="customSheet"]'));
+
+            // Detectar si la sesión expiró (página de login)
+            if (doc.querySelector('input[name="login"]') || doc.querySelector('form[action*="login"]') || !csrfToken) {
+                console.warn(`⚠️ Sesión expirada o no autenticado al acceder a ${className}.`);
+                const err = new Error(`PERMANENT_FAILURE_SESSION`);
+                err.code = 'PERMANENT_FAILURE_SESSION';
+                err.className = className;
+                throw err;
+            }
 
             const cleanTargetSheet = sheetName.trim().toLowerCase();
 
@@ -1009,10 +1022,16 @@
             if (targetBtn && csrfToken) {
                 return await fetchPDFBlob(targetUrl, targetBtn.value, csrfToken, className, timeoutMs);
             } else {
-                console.warn(`⚠️ Plantilla "${sheetName}" no hallada en la lista de botones de ${className}`);
-                return null;
+                console.warn(`⚠️ Plantilla "${sheetName}" no hallada en los botones de ${className}`);
+                const err = new Error(`PERMANENT_FAILURE_SHEET`);
+                err.code = 'PERMANENT_FAILURE_SHEET';
+                err.className = className;
+                throw err;
             }
         } catch (err) {
+            if (err.code === 'PERMANENT_FAILURE_HTML' || err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+                throw err;
+            }
             console.error(`❌ Error leyendo página de ${className}:`, err);
             return null;
         }
@@ -1027,56 +1046,52 @@
         formData.append('customSheet', customSheetValue);
         formData.append('csrf_token', csrfToken);
 
-        try {
-            const res = await customRequest({
-                method: "POST",
-                url: "https://www.zipgrade.com/forms/packs.pdf",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer": refererUrl,
-                    "Origin": "https://www.zipgrade.com"
-                },
-                data: formData.toString(),
-                responseType: 'blob'
-            }, timeoutMs);
+        const res = await customRequest({
+            method: "POST",
+            url: "https://www.zipgrade.com/forms/packs.pdf",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": refererUrl,
+                "Origin": "https://www.zipgrade.com"
+            },
+            data: formData.toString(),
+            responseType: 'blob'
+        }, timeoutMs);
 
-            if (res.status === 200 && res.response) {
-                let blob = res.response;
-
-                // Si es un ArrayBuffer o viene sin tipo explícito, convertirlo a Blob seguro
-                if (blob instanceof ArrayBuffer) {
-                    blob = new Blob([blob], { type: 'application/pdf' });
-                }
-
-                if (blob instanceof Blob) {
-                    const blobSize = blob.size;
-
-                    // Verificar que el tamaño sea válido (> 500 bytes) y no sea una página HTML de error
-                    if (blobSize > 500) {
-                        // Verificación rápida de magic bytes si está disponible slice/text
-                        try {
-                            const headerText = await blob.slice(0, 50).text();
-                            if (headerText.startsWith("%PDF")) {
-                                return blob;
-                            } else if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
-                                console.warn(`⚠️ Servidor de ZipGrade devolvió una página HTML en lugar del PDF para ${className}`);
-                                return null;
-                            }
-                        } catch (e) {
-                            // Si slice().text() falla, retornar el blob si tiene un tamaño prudente
-                        }
-                        return blob;
-                    } else {
-                        console.warn(`⚠️ PDF demasiado pequeño (${blobSize} bytes) para ${className}`);
-                        return null;
-                    }
-                }
-            }
-            return null;
-        } catch (err) {
-            console.error(`❌ Error POST PDF (${className}):`, err);
+        if (res.status !== 200 || !res.response) {
             return null;
         }
+
+        let blob = res.response;
+        if (blob instanceof ArrayBuffer) {
+            blob = new Blob([blob], { type: 'application/pdf' });
+        }
+
+        if (!(blob instanceof Blob)) return null;
+
+        const blobSize = blob.size;
+        if (blobSize <= 500) {
+            console.warn(`⚠️ PDF demasiado pequeño (${blobSize} bytes) para ${className}`);
+            return null;
+        }
+
+        // Verificar magic bytes para distinguir PDF real de HTML
+        try {
+            const headerText = await blob.slice(0, 50).text();
+            if (headerText.startsWith("%PDF")) {
+                return blob;
+            }
+            if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
+                console.warn(`⚠️ Servidor devolvió HTML en vez de PDF para ${className}`);
+                const err = new Error(`PERMANENT_FAILURE_HTML`);
+                err.code = 'PERMANENT_FAILURE_HTML';
+                err.className = className;
+                throw err;
+            }
+        } catch (e) {
+            if (e.code === 'PERMANENT_FAILURE_HTML') throw e;
+        }
+        return blob;
     }
 
     // Auto-inicialización según URL
