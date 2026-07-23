@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      23.5
+// @version      23.7
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -1137,9 +1137,14 @@
                 }
                 if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
                     console.warn(`⚠️ Servidor devolvió HTML en vez de PDF para ${className}`);
-                    // Mostrar preview del HTML para depuración
-                    const preview = headerText + (await blob.slice(50, 250).text());
-                    console.warn(`🔍 HTML recibido (inicio): ${preview.replace(/\s+/g, ' ').trim().substring(0, 200)}`);
+                    // Leer más del HTML para identificar la página
+                    const fullPreview = await blob.slice(0, 800).text();
+                    console.warn(`🔍 HTML recibido (status ${response.status}): ${fullPreview.replace(/\s+/g, ' ').trim().substring(0, 300)}`);
+                    // Extraer el title si existe
+                    const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
+                    if (titleMatch) {
+                        console.warn(`📄 Título de página: "${titleMatch[1].trim()}"`);
+                    }
                     const err = new Error(`PERMANENT_FAILURE_HTML`);
                     err.code = 'PERMANENT_FAILURE_HTML';
                     err.className = className;
