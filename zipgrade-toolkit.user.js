@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.2
-// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
+// @version      24.4
+// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados y código de estudiante (menor a mayor) en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -61,7 +61,7 @@
     // ==========================================
     function extractGradeWeight(text) {
         if (!text) return 99999;
-        let clean = text.replace(/°/g, '').replace(/\s+/g, ' ').trim();
+        let clean = text.replace(/[º°ª]/g, '').replace(/\s+/g, ' ').trim();
 
         // Patrón: 6-1, 10-2, 6-A, etc.
         const dashMatch = clean.match(/\b(\d{1,2})\s*[-\s°]\s*(\d{1,2}|[A-Za-z])\b/);
@@ -124,14 +124,6 @@
             const w = extractGradeWeight(nameEl.innerText);
             if (w < 99999) return checkZeroStudents(row, w);
         }
-
-        // Buscar en todas las celdas de la fila (útil para /students/)
-        const tds = Array.from(row.querySelectorAll('td'));
-        for (const td of tds) {
-            const w = extractGradeWeight(td.innerText);
-            if (w < 99999) return checkZeroStudents(row, w);
-        }
-
         return checkZeroStudents(row, 99999);
     }
 
@@ -361,27 +353,66 @@
     }
 
     // ==========================================
-    // 6. INICIALIZAR EN /STUDENTS/ (ORDENAR TABLA DE ESTUDIANTES POR GRADO)
+    // 6. INICIALIZAR EN /STUDENTS/ (ORDENAR TABLA DE ESTUDIANTES POR GRADO Y CÓDIGO MENOR A MAYOR)
     // ==========================================
-    function initStudentsPage() {
-        console.log("⚙️ [ZipGrade] Reorganizando la página /students/ por grados...");
+    function getStudentGradeWeight(row) {
+        const table = row.closest('table');
+        let classColIdx = -1;
+        if (table) {
+            const ths = Array.from(table.querySelectorAll('thead th'));
+            classColIdx = ths.findIndex(th => th.innerText.toLowerCase().includes('class'));
+        }
+
+        let text = '';
+        if (classColIdx !== -1 && row.cells[classColIdx]) {
+            text = row.cells[classColIdx].innerText;
+        } else {
+            const cell = row.querySelector('td:nth-child(6)');
+            if (cell) text = cell.innerText;
+        }
+
+        if (!text || !text.trim() || text.trim() === '-') return 99999;
+
+        const parts = text.split(/[,;\n]+/);
+        let minWeight = 99999;
+        for (const part of parts) {
+            const w = extractGradeWeight(part);
+            if (w < minWeight) minWeight = w;
+        }
+        return minWeight;
+    }
+
+    function getStudentId(row) {
+        const table = row.closest('table');
+        let idColIdx = -1;
+        if (table) {
+            const ths = Array.from(table.querySelectorAll('thead th'));
+            idColIdx = ths.findIndex(th => {
+                const txt = th.innerText.toLowerCase();
+                return txt.includes('student id') || (txt.includes('id') && !txt.includes('external'));
+            });
+        }
+
+        let text = '';
+        if (idColIdx !== -1 && row.cells[idColIdx]) {
+            text = row.cells[idColIdx].innerText;
+        } else {
+            const cell = row.querySelector('td:nth-child(2)');
+            if (cell) text = cell.innerText;
+        }
+
+        const cleanText = text.trim();
+        const num = parseInt(cleanText.replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(num)) return num;
+        return cleanText || 999999;
+    }
+
+    function sortStudentTable() {
+        console.log("⚙️ [ZipGrade] Reorganizando la página /students/ por grado y código (menor a mayor)...");
         ensureAllEntriesShown();
 
         const table = document.getElementById('studentTable');
         if (!table) return;
-
-        // Destruir DataTables si existe para que no sobreescriba nuestro orden
-        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable) {
-            try {
-                if (window.jQuery.fn.DataTable.isDataTable(table)) {
-                    const dt = window.jQuery(table).DataTable();
-                    dt.destroy();
-                    console.log("✅ [ZipGrade] DataTable destruido para orden personalizado.");
-                }
-            } catch (e) {
-                console.warn("No se pudo destruir DataTable:", e);
-            }
-        }
 
         const mainCol = table.closest('.col-md-8') || table.closest('.col-md-9') || table.closest('.col-md-12') || table.parentElement;
         if (mainCol) {
@@ -395,30 +426,46 @@
         let rows = Array.from(tbody.querySelectorAll('tr'));
         if (rows.length === 0) return;
 
-        function extractStudentId(row) {
-            // Student ID está en td:nth-child(2) (col 2), no col 1 que es checkbox
-            const idCell = row.querySelector('td:nth-child(2)');
-            if (idCell) {
-                const text = idCell.innerText.trim();
-                const num = parseInt(text.replace(/[^0-9]/g, ''), 10);
-                if (!isNaN(num)) return num;
+        rows.sort((a, b) => {
+            const gradeA = getStudentGradeWeight(a);
+            const gradeB = getStudentGradeWeight(b);
+            if (gradeA !== gradeB) return gradeA - gradeB;
+
+            const idA = getStudentId(a);
+            const idB = getStudentId(b);
+            if (typeof idA === 'number' && typeof idB === 'number') {
+                return idA - idB;
             }
-            return 999999;
+            return String(idA).localeCompare(String(idB), undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        const fragment = document.createDocumentFragment();
+        rows.forEach(row => fragment.appendChild(row));
+        tbody.appendChild(fragment);
+
+        // Actualizar el estado interno de DataTables si existe para preservar nuestro orden
+        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable) {
+            try {
+                if (window.jQuery.fn.DataTable.isDataTable(table)) {
+                    const dt = window.jQuery(table).DataTable();
+                    dt.order([]); // Desactivar ordenación interna de DataTables
+                    dt.rows().invalidate('dom');
+                    dt.draw(false);
+                    console.log("✅ [ZipGrade] DataTables re-sincronizado con el orden por Grado + Código.");
+                }
+            } catch (e) {
+                console.warn("No se pudo actualizar DataTables:", e);
+            }
         }
 
-        rows.sort((a, b) => {
-            const gradeA = getAcademicWeight(a);
-            const gradeB = getAcademicWeight(b);
-            if (gradeA !== gradeB) return gradeA - gradeB;
-            // Mismo grado: ordenar por Student ID (col 2) ascendente
-            return extractStudentId(a) - extractStudentId(b);
-        });
-        rows.forEach(row => tbody.appendChild(row));
+        console.log(`✅ [ZipGrade] ${rows.length} filas reorganizadas por grado + código (menor a mayor) en /students/.`);
+    }
 
-        console.log(`✅ [ZipGrade] ${rows.length} filas reorganizadas por grado + ID en /students/.`);
-
-        // Re-verificar tras renderizado
-        setTimeout(ensureAllEntriesShown, 600);
+    function initStudentsPage() {
+        sortStudentTable();
+        // Re-verificar tras renderizado dinámico de DataTables
+        setTimeout(sortStudentTable, 400);
+        setTimeout(sortStudentTable, 1000);
     }
 
     // ==========================================
@@ -443,7 +490,17 @@
             const tbody = table.querySelector('tbody');
             let rows = Array.from(tbody.querySelectorAll('tr'));
 
-            rows.sort((a, b) => getAcademicWeight(a) - getAcademicWeight(b));
+            rows.sort((a, b) => {
+                const weightA = getAcademicWeight(a);
+                const weightB = getAcademicWeight(b);
+                if (weightA !== weightB) return weightA - weightB;
+
+                const nameElA = a.querySelector('td:nth-child(2)');
+                const nameElB = b.querySelector('td:nth-child(2)');
+                const nameA = nameElA ? nameElA.innerText.trim() : '';
+                const nameB = nameElB ? nameElB.innerText.trim() : '';
+                return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+            });
             rows.forEach(row => tbody.appendChild(row));
 
             // Cabecera
@@ -1147,15 +1204,28 @@
                 // para replicar exactamente lo que enviaría el navegador al hacer clic
                 const form = targetBtn.closest('form');
                 const extraFields = {};
+                let formActionUrl = targetUrl;
+                if (form && form.getAttribute('action')) {
+                    formActionUrl = new URL(form.getAttribute('action'), targetUrl).href;
+                }
                 if (form) {
-                    const hiddenInputs = form.querySelectorAll('input[type="hidden"], input:not([type])');
-                    hiddenInputs.forEach(inp => {
-                        if (inp.name && inp.name !== 'customSheet') {
+                    const inputs = form.querySelectorAll('input, select, textarea');
+                    inputs.forEach(inp => {
+                        if (inp.name && inp.name !== 'customSheet' && inp.value !== undefined && !inp.disabled) {
                             extraFields[inp.name] = inp.value;
                         }
                     });
                 }
-                const result = await fetchPDFBlob(targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields);
+
+                // Intento 1: POST a la URL de acción del formulario o targetUrl de la clase
+                let result = await fetchPDFBlob(formActionUrl, targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
+
+                // Intento 2: Si devolvió HTML y la URL probada no era /forms/packs.pdf, probar /forms/packs.pdf
+                if (result && result.code === 'PERMANENT_FAILURE_HTML' && formActionUrl !== "https://www.zipgrade.com/forms/packs.pdf") {
+                    console.warn(`🔄 Reintentando POST alternativo a /forms/packs.pdf para ${className}...`);
+                    result = await fetchPDFBlob("https://www.zipgrade.com/forms/packs.pdf", targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
+                }
+
                 if (result && result.code === 'PERMANENT_FAILURE_HTML') {
                     const err = new Error(`PERMANENT_FAILURE_HTML`);
                     err.code = 'PERMANENT_FAILURE_HTML';
@@ -1179,12 +1249,14 @@
         }
     }
 
-    async function fetchPDFBlob(refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000, extraFields = {}) {
+    async function fetchPDFBlob(postUrl, refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000, extraFields = {}, btnName = 'customSheet') {
         if (cancelDownloadRequested) return null;
 
         const formData = new URLSearchParams();
-        formData.append('customSheet', customSheetValue);
-        formData.append('csrf_token', csrfToken);
+        formData.append(btnName, customSheetValue);
+        if (!formData.has('csrf_token') && csrfToken) {
+            formData.append('csrf_token', csrfToken);
+        }
         for (const [key, val] of Object.entries(extraFields)) {
             if (!formData.has(key)) formData.append(key, val);
         }
@@ -1194,21 +1266,21 @@
         const bodyStr = formData.toString();
 
         // Intentar con fetch (credentials: 'include' para cookies de sesión)
-        const result = await attemptFetchPDF(bodyStr, refererUrl, className, timeoutMs);
+        const result = await attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
         if (result === 'RETRY_GM') {
             // Fallback: GM_xmlhttpRequest
             console.warn(`🔄 Reintentando con GM_xmlhttpRequest para ${className}...`);
-            return await attemptGMXHRPDF(bodyStr, refererUrl, className, timeoutMs);
+            return await attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
         }
         return result;
     }
 
-    async function attemptFetchPDF(bodyStr, refererUrl, className, timeoutMs) {
+    async function attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const resp = await fetch("https://www.zipgrade.com/forms/packs.pdf", {
+            const resp = await fetch(postUrl, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -1239,7 +1311,7 @@
         }
     }
 
-    async function attemptGMXHRPDF(bodyStr, refererUrl, className, timeoutMs) {
+    async function attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
         return new Promise(resolve => {
             if (typeof GM_xmlhttpRequest === 'undefined') {
                 resolve(null);
@@ -1253,7 +1325,7 @@
 
             GM_xmlhttpRequest({
                 method: "POST",
-                url: "https://www.zipgrade.com/forms/packs.pdf",
+                url: postUrl,
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Referer": refererUrl,
