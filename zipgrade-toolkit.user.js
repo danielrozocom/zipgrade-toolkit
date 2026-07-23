@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.0
+// @version      24.1
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -38,6 +38,19 @@
     } catch (e) {
         console.error("❌ Error cargando JSZip:", e);
     }
+
+    // ==========================================
+    // 1b. CARGA DINÁMICA DE FONT AWESOME
+    // ==========================================
+    function loadFontAwesome() {
+        if (document.querySelector('link[href*="font-awesome"], link[href*="fontawesome"]')) return;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css';
+        link.onload = () => console.log("✅ [ZipGrade] Font Awesome cargado.");
+        document.head.appendChild(link);
+    }
+    loadFontAwesome();
 
     let availableSheets = [];
     let cancelDownloadRequested = false;
@@ -369,10 +382,27 @@
         let rows = Array.from(tbody.querySelectorAll('tr'));
         if (rows.length === 0) return;
 
-        rows.sort((a, b) => getAcademicWeight(a) - getAcademicWeight(b));
+        function extractStudentId(row) {
+            // Intentar obtener ID numérico de la primera celda
+            const idCell = row.querySelector('td:nth-child(1)');
+            if (idCell) {
+                const text = idCell.innerText.trim();
+                const num = parseInt(text.replace(/[^0-9]/g, ''), 10);
+                if (!isNaN(num)) return num;
+            }
+            return 999999;
+        }
+
+        rows.sort((a, b) => {
+            const gradeA = getAcademicWeight(a);
+            const gradeB = getAcademicWeight(b);
+            if (gradeA !== gradeB) return gradeA - gradeB;
+            // Mismo grado: ordenar por ID de estudiante ascendente
+            return extractStudentId(a) - extractStudentId(b);
+        });
         rows.forEach(row => tbody.appendChild(row));
 
-        console.log(`✅ [ZipGrade] ${rows.length} filas reorganizadas por grado en /students/.`);
+        console.log(`✅ [ZipGrade] ${rows.length} filas reorganizadas por grado + ID en /students/.`);
 
         // Re-verificar tras renderizado
         setTimeout(ensureAllEntriesShown, 600);
@@ -438,7 +468,7 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
-                                <i class="fa fa-cogs" style="font-size:14px;"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v24.0</small>
+                                <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v24.0</small>
                             </span>
                             <button id="zg-btn-select-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
                                 <i class="fa fa-check-square-o"></i> Seleccionar Todo
