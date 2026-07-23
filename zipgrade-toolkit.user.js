@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      23.7
+// @version      23.9
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -244,7 +244,12 @@
         }
     }
 
-    // Persistencia local para no perder selecciones
+    function getStorageKey() {
+        const session = document.getElementById('zg-global-session')?.value || 'S1';
+        return STORAGE_KEY_MAPPINGS + '_' + session;
+    }
+
+    // Persistencia local por sesión
     function saveMappingsToStorage() {
         try {
             const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
@@ -252,7 +257,7 @@
             selects.forEach(s => {
                 if (s.value) mappings[s.dataset.className] = s.value;
             });
-            localStorage.setItem(STORAGE_KEY_MAPPINGS, JSON.stringify(mappings));
+            localStorage.setItem(getStorageKey(), JSON.stringify(mappings));
         } catch (e) {
             console.warn("No se pudo guardar la configuración en localStorage", e);
         }
@@ -260,8 +265,17 @@
 
     function loadSavedMappingsFromStorage() {
         try {
-            const raw = localStorage.getItem(STORAGE_KEY_MAPPINGS);
-            if (!raw) return;
+            // Limpiar selecciones actuales primero
+            const allChecks = document.querySelectorAll('.zg-row-check');
+            allChecks.forEach(chk => chk.checked = false);
+            const allSelects = document.querySelectorAll('.zg-row-sheet');
+            allSelects.forEach(s => s.value = '');
+
+            const raw = localStorage.getItem(getStorageKey());
+            if (!raw) {
+                updateSelectedCounter();
+                return;
+            }
             const mappings = JSON.parse(raw);
             const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
             selects.forEach(s => {
@@ -607,6 +621,19 @@
             // Cargar selecciones previas guardadas en localStorage
             loadSavedMappingsFromStorage();
 
+            // Persistir selector de sesión en localStorage y recargar asignaciones
+            const sessionSelect = document.getElementById('zg-global-session');
+            const savedSession = localStorage.getItem('zipgrade_toolkit_session');
+            if (savedSession && sessionSelect) {
+                sessionSelect.value = savedSession;
+            }
+            if (sessionSelect) {
+                sessionSelect.addEventListener('change', () => {
+                    localStorage.setItem('zipgrade_toolkit_session', sessionSelect.value);
+                    loadSavedMappingsFromStorage();
+                });
+            }
+
             // Controles de Selección
             const setAllChecks = (state) => {
                 const checks = document.querySelectorAll('.zg-row-check');
@@ -846,6 +873,7 @@
 
         const zip = !individualMode ? new JSZip() : null;
         let successCount = 0;
+        let consecutiveErrors = 0;
 
         for (let i = 0; i < queue.length; i++) {
             if (cancelDownloadRequested) {
@@ -878,6 +906,7 @@
                     console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${pdfBlob.size} bytes).`);
                 }
                 successCount++;
+                consecutiveErrors = 0;
 
                 // En modo individual, pausa extra para que el navegador procese la descarga
                 if (individualMode) {
@@ -886,11 +915,16 @@
             } else {
                 console.error(`❌ No se pudo obtener PDF válido para "${item.className}". Omitido.`);
                 updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
+                consecutiveErrors++;
             }
 
-            // Pausa breve entre descargas para evitar sobrecargar el servidor
+            // Pausa adaptativa entre descargas: aumenta si hay errores consecutivos
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                const pause = individualMode ? 2000 : 1500;
+                let pause = individualMode ? 2000 : 1500;
+                if (consecutiveErrors > 0) {
+                    pause = Math.min(8000, pause + (consecutiveErrors * 2000));
+                    console.warn(`⏱️ ${consecutiveErrors} error(es) consecutivo(s) — pausa extendida a ${pause/1000}s`);
+                }
                 console.log(`⏱️ Pausa de ${pause/1000}s antes de la siguiente descarga...`);
                 await new Promise(r => setTimeout(r, pause));
             }
