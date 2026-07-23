@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.6
+// @version      24.7
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -1018,15 +1018,16 @@
                 consecutiveErrors++;
             }
 
-            // Pausa adaptativa entre descargas y pausa preventiva de enfriamiento cada 4 descargas
+            // Pausa entre descargas: pausa preventiva de enfriamiento cada 5 descargas exitosas (límite real de ZipGrade)
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                let pause = individualMode ? 3000 : 2500;
+                let pause = individualMode ? 3500 : 3000;
 
-                // Pausa preventiva de enfriamiento cada 4 descargas exitosas para prevenir límites del servidor
-                if (successCount > 0 && successCount % 4 === 0 && consecutiveErrors === 0) {
-                    console.log(`⏱️ Pausa de enfriamiento preventivo (4s) tras ${successCount} descargas para liberar límites en servidor ZipGrade...`);
-                    updateStatusText(`Enfriamiento preventivo (4s) tras ${successCount} descargas...`);
-                    await new Promise(r => setTimeout(r, 4000));
+                // ZipGrade permite ~5 PDFs por ventana de ~60s — pausar 20s cada 5 descargas
+                if (successCount > 0 && successCount % 5 === 0 && consecutiveErrors === 0) {
+                    const coolingTime = 20000;
+                    console.log(`⏳ Pausa de enfriamiento de ${coolingTime / 1000}s tras ${successCount} descargas (límite de velocidad ZipGrade)...`);
+                    updateStatusText(`⏳ Enfriando ${coolingTime / 1000}s tras ${successCount} descargas para evitar bloqueo del servidor...`);
+                    await new Promise(r => setTimeout(r, coolingTime));
                 }
 
                 if (consecutiveErrors > 0) {
@@ -1094,8 +1095,12 @@
     }
 
     // Reintentos automáticos con Backoff Adaptativo y recuperación de límite de velocidad
+    // ZipGrade bloquea tras ~5 PDFs/ventana; la ventana dura ~60s — esperar suficiente antes de reintentar
     async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 4) {
-        const retryDelays = [8000, 12000, 18000];
+        // Pausas de recuperación para RATE_LIMIT_HTML: 30s, 45s, 60s
+        const rateLimitDelays = [30000, 45000, 60000];
+        // Pausas para errores genéricos de red/timeout
+        const networkDelays = [8000, 12000, 18000];
         const timeouts = [45000, 60000, 90000, 90000];
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1118,7 +1123,7 @@
                     updateStatusText(`⏭️ ${className} omitido (${err.code})`);
                     return null;
                 }
-                // Cualquier otro error de red/timeout — tratar como reintentable
+                // Error de red/timeout — reintentable
                 console.warn(`⚠️ Error de red en intento ${attempt}/${maxRetries} para ${className}: ${err.message}`);
                 result = null;
             }
@@ -1126,23 +1131,24 @@
             // Éxito: retornar blob válido
             if (result instanceof Blob) return result;
 
-            // Resultado con código de error (ej: RATE_LIMIT_HTML, PERMANENT_FAILURE_SESSION)
+            // Resultado con código de error
             if (result && result.code) {
                 if (result.code === 'PERMANENT_FAILURE_SESSION') {
                     console.warn(`⏭️ Sesión expirada para ${className}. Omitiendo.`);
                     return null;
                 }
-                // RATE_LIMIT_HTML u otro código HTML — reintentable con pausa
-                const waitTime = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
-                console.warn(`⚠️ Servidor devolvió HTML (${result.code}) en intento ${attempt}/${maxRetries} para ${className}. Pausando ${waitTime / 1000}s para recuperar...`);
-                updateStatusText(`🔄 Recuperando (${waitTime / 1000}s) ${className} (intento ${attempt}/${maxRetries})...`);
+
+                // RATE_LIMIT_HTML: ZipGrade bloqueó la petición — esperar la ventana completa (~60s)
+                const waitTime = rateLimitDelays[Math.min(attempt - 1, rateLimitDelays.length - 1)];
+                console.warn(`⏳ Servidor bloqueado (${result.code}) en intento ${attempt}/${maxRetries} para ${className}. Esperando ${waitTime / 1000}s para que ZipGrade libere la ventana de velocidad...`);
+                updateStatusText(`⏳ Espera ${waitTime / 1000}s — ZipGrade bloqueó temporalmente (${attempt}/${maxRetries}) para ${className}`);
                 if (!cancelDownloadRequested) await new Promise(r => setTimeout(r, waitTime));
                 continue;
             }
 
-            // null o resultado vacío: reintentable
+            // null — error genérico reintentable
             if (attempt < maxRetries && !cancelDownloadRequested) {
-                const waitTime = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+                const waitTime = networkDelays[Math.min(attempt - 1, networkDelays.length - 1)];
                 console.warn(`⚠️ Sin PDF en intento ${attempt}/${maxRetries} para ${className}. Reintentando en ${waitTime / 1000}s...`);
                 await new Promise(r => setTimeout(r, waitTime));
             }
