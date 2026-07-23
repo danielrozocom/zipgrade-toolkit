@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.1
+// @version      24.2
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -367,8 +367,21 @@
         console.log("⚙️ [ZipGrade] Reorganizando la página /students/ por grados...");
         ensureAllEntriesShown();
 
-        const table = document.getElementById('studentTable') || document.querySelector('table.table') || document.querySelector('table');
+        const table = document.getElementById('studentTable');
         if (!table) return;
+
+        // Destruir DataTables si existe para que no sobreescriba nuestro orden
+        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable) {
+            try {
+                if (window.jQuery.fn.DataTable.isDataTable(table)) {
+                    const dt = window.jQuery(table).DataTable();
+                    dt.destroy();
+                    console.log("✅ [ZipGrade] DataTable destruido para orden personalizado.");
+                }
+            } catch (e) {
+                console.warn("No se pudo destruir DataTable:", e);
+            }
+        }
 
         const mainCol = table.closest('.col-md-8') || table.closest('.col-md-9') || table.closest('.col-md-12') || table.parentElement;
         if (mainCol) {
@@ -383,8 +396,8 @@
         if (rows.length === 0) return;
 
         function extractStudentId(row) {
-            // Intentar obtener ID numérico de la primera celda
-            const idCell = row.querySelector('td:nth-child(1)');
+            // Student ID está en td:nth-child(2) (col 2), no col 1 que es checkbox
+            const idCell = row.querySelector('td:nth-child(2)');
             if (idCell) {
                 const text = idCell.innerText.trim();
                 const num = parseInt(text.replace(/[^0-9]/g, ''), 10);
@@ -397,7 +410,7 @@
             const gradeA = getAcademicWeight(a);
             const gradeB = getAcademicWeight(b);
             if (gradeA !== gradeB) return gradeA - gradeB;
-            // Mismo grado: ordenar por ID de estudiante ascendente
+            // Mismo grado: ordenar por Student ID (col 2) ascendente
             return extractStudentId(a) - extractStudentId(b);
         });
         rows.forEach(row => tbody.appendChild(row));
