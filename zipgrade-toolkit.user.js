@@ -5,8 +5,8 @@
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa y ordenación por grados en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
-// @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/Code.js
-// @updateURL    https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/Code.js
+// @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
+// @updateURL    https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download

@@ -8,9 +8,9 @@ Un Userscript potente y moderno para **ZipGrade** que permite empaquetar plantil
 
 Haz clic en el siguiente botón para instalar directamente en Tampermonkey con un solo clic:
 
-[![Instalar en Tampermonkey](https://img.shields.io/badge/🚀_Instalar_en_Tampermonkey-RAW-10b981?style=for-the-badge&logo=tampermonkey)](https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/Code.js)
+[![Instalar en Tampermonkey](https://img.shields.io/badge/🚀_Instalar_en_Tampermonkey-RAW-10b981?style=for-the-badge&logo=tampermonkey)](https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js)
 
-> **Enlace directo RAW**: `https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/Code.js`
+> **Enlace directo RAW**: `https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js`
 
 ---
 
@@ -37,6 +37,6 @@ Haz clic en el siguiente botón para instalar directamente en Tampermonkey con u
 ## 🛠️ Instalación Manual
 
 1. Instala la extensión [Tampermonkey](https://www.tampermonkey.net/) en tu navegador (Chrome, Edge, Firefox, Brave).
-2. Haz clic en el botón [Instalar en Tampermonkey](https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/Code.js).
+2. Haz clic en el botón [Instalar en Tampermonkey](https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js).
 3. Presiona **Instalar** (o **Actualizar**).
 4. Abre [ZipGrade Classes](https://www.zipgrade.com/classes/) o [ZipGrade Students](https://www.zipgrade.com/students/) y disfruta de la herramienta.
