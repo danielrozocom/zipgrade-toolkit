@@ -438,13 +438,13 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
-                                🛠️ ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v23.1</small>
+                                <i class="fa fa-cogs" style="font-size:14px;"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v24.0</small>
                             </span>
                             <button id="zg-btn-select-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
-                                ☑️ Seleccionar Todo
+                                <i class="fa fa-check-square-o"></i> Seleccionar Todo
                             </button>
                             <button id="zg-btn-deselect-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
-                                ⬜ Deseleccionar Todo
+                                <i class="fa fa-square-o"></i> Deseleccionar Todo
                             </button>
                         </div>
 
@@ -464,16 +464,16 @@
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
                                 </select>
                                 <button id="zg-btn-apply-checked" class="btn btn-primary btn-xs" style="font-size:11px; font-weight:600; border-radius:4px; padding:4px 10px;">
-                                    Aplicar a Marcados
+                                    <i class="fa fa-check"></i> Aplicar a Marcados
                                 </button>
                             </div>
 
                             <div style="display:flex; align-items:center; gap:6px; border-left: 1px solid #e2e8f0; padding-left:12px;">
                                 <button id="zg-btn-export-json" class="btn btn-default btn-xs" style="font-size:11px; border-radius:4px;" title="Exportar asignaciones a JSON">
-                                    📤 Exportar Config
+                                    <i class="fa fa-upload"></i> Exportar Config
                                 </button>
                                 <label id="zg-label-import-json" class="btn btn-default btn-xs" style="font-size:11px; margin:0; cursor:pointer; font-weight:normal; border-radius:4px;" title="Cargar asignaciones desde JSON">
-                                    📥 Importar Config
+                                    <i class="fa fa-download"></i> Importar Config
                                     <input type="file" id="zg-file-input" accept=".json" style="display:none;" />
                                 </label>
                             </div>
@@ -484,18 +484,18 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <button id="zg-btn-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
-                                📦 Descargar
+                                <i class="fa fa-download"></i> Descargar
                             </button>
                             <label style="display:flex; align-items:center; gap:4px; font-size:11px; font-weight:500; color:#475569; cursor:pointer; user-select:none;">
                                 <input type="checkbox" id="zg-mode-individual" style="margin:0; cursor:pointer;" />
                                 Individual (sin ZIP)
                             </label>
                             <button id="zg-btn-stop-download" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
-                                🛑 Detener
+                                <i class="fa fa-stop-circle"></i> Detener
                             </button>
                         </div>
                         <div id="zg-status-text" style="font-size:12px; color:#475569; font-weight:500;">
-                            Listo para procesar.
+                            <i class="fa fa-info-circle"></i> Listo para procesar.
                         </div>
                     </div>
 
@@ -513,14 +513,14 @@
                     <!-- Fila 4: Banner para Descarga Directa Garantizada si el navegador bloquea emergentes -->
                     <div id="zg-download-banner" style="display:none; background:#ecfdf5; border:1px solid #10b981; border-radius:8px; padding:10px 16px; align-items:center; justify-content:space-between; color:#065f46;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:18px;">🎉</span>
+                            <i class="fa fa-check-circle" style="font-size:20px; color:#10b981;"></i>
                             <div>
                                 <strong style="font-size:13px; display:block;">¡Archivo ZIP generado exitosamente!</strong>
                                 <span style="font-size:11px; opacity:0.9;">Si la descarga no inició automáticamente, haz clic en el botón a la derecha.</span>
                             </div>
                         </div>
                         <a id="zg-btn-direct-download" href="#" download="" style="background:#10b981; color:#fff; text-decoration:none; padding:7px 16px; border-radius:6px; font-weight:700; font-size:12px; display:inline-block; box-shadow:0 2px 4px rgba(16,185,129,0.3);">
-                            💾 Descargar ZIP Ahora
+                            <i class="fa fa-download"></i> Descargar ZIP Ahora
                         </a>
                     </div>
                 `;
