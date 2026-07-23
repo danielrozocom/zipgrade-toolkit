@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.7
+// @version      24.8
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -1002,8 +1002,11 @@
                     downloadBlob(pdfBlob, filename);
                     console.log(`📥 [Individual] PDF de ${item.className} descargado.`);
                 } else {
-                    zip.file(filename, pdfBlob);
-                    console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${pdfBlob.size} bytes).`);
+                    // Convertir a ArrayBuffer antes de agregar al ZIP para evitar
+                    // problemas de contexto entre sandbox de Tampermonkey y JSZip
+                    const buf = await pdfBlob.arrayBuffer();
+                    zip.file(filename, buf);
+                    console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${buf.byteLength} bytes).`);
                 }
                 successCount++;
                 consecutiveErrors = 0;
@@ -1053,7 +1056,9 @@
 
                 try {
                     let lastPercent = -1;
-                    const content = await zip.generateAsync({
+
+                    // Timeout de 30s para la generación del ZIP (puede colgarse en sandbox)
+                    const zipPromise = zip.generateAsync({
                         type: "blob",
                         compression: "STORE"
                     }, function updateCallback(metadata) {
@@ -1065,17 +1070,28 @@
                         }
                     });
 
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('ZIP_TIMEOUT')), 30000)
+                    );
+
+                    const content = await Promise.race([zipPromise, timeoutPromise]);
+
                     setProgressBar(100, '¡ZIP listo!');
                     const zipFilename = `ZipGrade_Lote_${session}.zip`;
 
                     triggerDownloadWithBanner(content, zipFilename);
 
                     console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
-                    updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos! Haz clic en "Descargar ZIP Ahora" si no inició solo.`);
+                    updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos!`);
                 } catch (zipErr) {
-                    console.error("❌ Error al generar archivo ZIP:", zipErr);
-                    updateStatusText('❌ Error al generar el archivo ZIP.');
-                    alert(`Error al generar el archivo ZIP: ${zipErr.message || zipErr}`);
+                    const isTimeout = zipErr.message === 'ZIP_TIMEOUT';
+                    console.error(isTimeout ? '⏰ Timeout generando ZIP' : '❌ Error al generar archivo ZIP:', zipErr);
+                    updateStatusText(isTimeout
+                        ? '⏰ La generación del ZIP tomó demasiado tiempo — usa modo Individual'
+                        : '❌ Error al generar el archivo ZIP.');
+                    if (isTimeout) {
+                        alert('La generación del ZIP se ha quedado trabada. Usa el modo "Individual (sin ZIP)" para descargar los PDFs uno por uno.');
+                    }
                 }
             }
         } else if (!cancelDownloadRequested) {
