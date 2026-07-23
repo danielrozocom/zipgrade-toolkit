@@ -580,7 +580,7 @@
                             const pdfBlob = await processSingleDownloadWithRetry(classId, className, select.value, session);
                             if (pdfBlob) {
                                 const filename = `${className}_${session}.pdf`;
-                                triggerFileDownload(pdfBlob, filename);
+                                downloadBlob(pdfBlob, filename);
                                 updateStatusText(`✅ Descarga completada: ${filename}`);
                             } else {
                                 alert(`No se pudo descargar el PDF de ${className}. Revisa la consola o intenta nuevamente.`);
@@ -701,38 +701,45 @@
         if (container) container.style.display = 'none';
     }
 
-    // Helper unificado para descargar archivos de forma segura
-    function triggerFileDownload(blob, filename) {
+    // Descarga simple de un blob (para PDFs individuales o JSON)
+    function downloadBlob(blob, filename) {
         const url = URL.createObjectURL(blob);
-
-        if (typeof GM_download !== 'undefined') {
-            try {
-                GM_download({
-                    url: url,
-                    name: filename,
-                    onload: () => setTimeout(() => URL.revokeObjectURL(url), 10000),
-                    onerror: () => fallbackDownload(url, filename)
-                });
-                return;
-            } catch (e) {
-                console.warn("GM_download falló, recurriendo a fallback DOM:", e);
-            }
-        }
-        fallbackDownload(url, filename);
-    }
-
-    function fallbackDownload(url, filename) {
         const link = document.createElement('a');
-        link.style.display = 'none';
         link.href = url;
         link.download = filename;
+        link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
-
         setTimeout(() => {
             if (link.parentNode) link.parentNode.removeChild(link);
             URL.revokeObjectURL(url);
-        }, 15000);
+        }, 60000);
+    }
+
+    // Descarga ZIP: auto-descarga + enlace persistente en la UI
+    function triggerDownloadWithBanner(blob, filename) {
+        const url = URL.createObjectURL(blob);
+
+        // 1. Auto-descarga vía anchor oculto (funciona sin GM_download)
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+            if (link.parentNode) link.parentNode.removeChild(link);
+        }, 3000);
+
+        // 2. Banner persistente por si el navegador bloquea la auto-descarga
+        const bannerEl = document.getElementById('zg-download-banner');
+        const directLink = document.getElementById('zg-btn-direct-download');
+        if (bannerEl && directLink) {
+            bannerEl.style.display = 'flex';
+            directLink.href = url;
+            directLink.download = filename;
+            console.log(`📎 Enlace de descarga directa disponible: ${filename}`);
+        }
     }
 
     // ==========================================
@@ -750,7 +757,7 @@
         });
 
         const blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
-        triggerFileDownload(blob, `config_zipgrade_${session}.json`);
+        downloadBlob(blob, `config_zipgrade_${session}.json`);
     }
 
     function importConfigJSON(event) {
@@ -892,23 +899,10 @@
                 setProgressBar(100, '¡ZIP listo!');
                 const zipFilename = `ZipGrade_Lote_${session}.zip`;
 
-                // Intento 1: Descarga automática
-                triggerFileDownload(content, zipFilename);
-
-                // Intento 2: Banner de Descarga Directa visible en la UI por si el navegador bloqueó la descarga automática
-                const zipUrl = URL.createObjectURL(content);
-                if (bannerEl) {
-                    bannerEl.style.display = 'flex';
-                    const directLink = document.getElementById('zg-btn-direct-download');
-                    if (directLink) {
-                        directLink.href = zipUrl;
-                        directLink.download = zipFilename;
-                    }
-                }
+                triggerDownloadWithBanner(content, zipFilename);
 
                 console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
-                updateStatusText(`🎉 ¡ZIP listo con ${successCount} de ${queue.length} archivos!`);
-                alert(`¡ZIP generado con éxito con ${successCount} de ${queue.length} archivos PDF!`);
+                updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos! Haz clic en "Descargar ZIP Ahora" si no inició solo.`);
             } catch (zipErr) {
                 console.error("❌ Error al generar archivo ZIP:", zipErr);
                 updateStatusText('❌ Error al generar el archivo ZIP.');
