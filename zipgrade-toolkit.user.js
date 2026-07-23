@@ -1,13 +1,12 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      24.8
+// @version      25.0
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
 // @updateURL    https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // ==/UserScript==
@@ -16,31 +15,7 @@
     'use strict';
 
     // ==========================================
-    // 1. CARGA DINÁMICA DE JSZIP (Backup por si falla @require)
-    // ==========================================
-    async function loadJSZip() {
-        if (typeof JSZip !== 'undefined') return;
-        console.log("📦 [ZipGrade] Cargando librería JSZip dinámicamente...");
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-            script.onload = () => {
-                console.log("✅ [ZipGrade] JSZip cargado con éxito.");
-                resolve();
-            };
-            script.onerror = () => reject(new Error("No se pudo cargar JSZip desde CDN"));
-            document.head.appendChild(script);
-        });
-    }
-
-    try {
-        await loadJSZip();
-    } catch (e) {
-        console.error("❌ Error cargando JSZip:", e);
-    }
-
-    // ==========================================
-    // 1b. CARGA DINÁMICA DE FONT AWESOME
+    // 1. CARGA DINÁMICA DE FONT AWESOME
     // ==========================================
     function loadFontAwesome() {
         if (document.querySelector('link[href*="font-awesome"], link[href*="fontawesome"]')) return;
@@ -584,12 +559,8 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <button id="zg-btn-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
-                                <i class="fa fa-download"></i> Descargar
+                                <i class="fa fa-download"></i> Descargar PDFs
                             </button>
-                            <label style="display:flex; align-items:center; gap:4px; font-size:11px; font-weight:500; color:#475569; cursor:pointer; user-select:none;">
-                                <input type="checkbox" id="zg-mode-individual" style="margin:0; cursor:pointer;" />
-                                Individual (sin ZIP)
-                            </label>
                             <button id="zg-btn-stop-download" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
                                 <i class="fa fa-stop-circle"></i> Detener
                             </button>
@@ -610,18 +581,15 @@
                         </div>
                     </div>
 
-                    <!-- Fila 4: Banner para Descarga Directa Garantizada si el navegador bloquea emergentes -->
+                    <!-- Fila 4: Banner de descarga completada -->
                     <div id="zg-download-banner" style="display:none; background:#ecfdf5; border:1px solid #10b981; border-radius:8px; padding:10px 16px; align-items:center; justify-content:space-between; color:#065f46;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <i class="fa fa-check-circle" style="font-size:20px; color:#10b981;"></i>
                             <div>
-                                <strong style="font-size:13px; display:block;">¡Archivo ZIP generado exitosamente!</strong>
-                                <span style="font-size:11px; opacity:0.9;">Si la descarga no inició automáticamente, haz clic en el botón a la derecha.</span>
+                                <strong style="font-size:13px; display:block;">¡Descargas completadas!</strong>
+                                <span style="font-size:11px; opacity:0.9;">Los PDFs se han descargado individualmente a tu carpeta de descargas.</span>
                             </div>
                         </div>
-                        <a id="zg-btn-direct-download" href="#" download="" style="background:#10b981; color:#fff; text-decoration:none; padding:7px 16px; border-radius:6px; font-weight:700; font-size:12px; display:inline-block; box-shadow:0 2px 4px rgba(16,185,129,0.3);">
-                            <i class="fa fa-download"></i> Descargar ZIP Ahora
-                        </a>
                     </div>
                 `;
                 table.parentNode.insertBefore(topBar, table);
@@ -694,15 +662,17 @@
 
                             console.log(`▶️ [Individual] Descargando ${className}...`);
                             updateStatusText(`Descargando individual: ${className}...`);
+                            const t0 = Date.now();
 
                             const pdfBlob = await processSingleDownloadWithRetry(classId, className, select.value, session);
+                            const elapsed = Math.round((Date.now() - t0) / 1000);
                             if (pdfBlob) {
                                 const filename = `${className}_${session}.pdf`;
                                 downloadBlob(pdfBlob, filename);
-                                updateStatusText(`✅ Descarga completada: ${filename}`);
+                                updateStatusText(`✅ ${filename} descargado en ${elapsed}s`);
                             } else {
                                 alert(`No se pudo descargar el PDF de ${className}. Revisa la consola o intenta nuevamente.`);
-                                updateStatusText(`❌ Error al descargar ${className}`);
+                                updateStatusText(`❌ Error al descargar ${className} (${elapsed}s)`);
                             }
 
                             btn.disabled = false;
@@ -847,31 +817,7 @@
         }, 60000);
     }
 
-    // Descarga ZIP: auto-descarga + enlace persistente en la UI
-    function triggerDownloadWithBanner(blob, filename) {
-        const url = URL.createObjectURL(blob);
 
-        // 1. Auto-descarga vía anchor oculto (funciona sin GM_download)
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-            if (link.parentNode) link.parentNode.removeChild(link);
-        }, 3000);
-
-        // 2. Banner persistente por si el navegador bloquea la auto-descarga
-        const bannerEl = document.getElementById('zg-download-banner');
-        const directLink = document.getElementById('zg-btn-direct-download');
-        if (bannerEl && directLink) {
-            bannerEl.style.display = 'flex';
-            directLink.href = url;
-            directLink.download = filename;
-            console.log(`📎 Enlace de descarga directa disponible: ${filename}`);
-        }
-    }
 
     // ==========================================
     // 7. FUNCIONES DE IMPORTAR / EXPORTAR JSON
@@ -925,15 +871,9 @@
     }
 
     // ==========================================
-    // 8. MOTOR DE EMPAQUETADO EN ZIP
+    // 8. DESCARGA INDIVIDUAL DE PDFs
     // ==========================================
     async function downloadSelectedAsZip() {
-        const individualMode = document.getElementById('zg-mode-individual')?.checked ?? false;
-
-        if (!individualMode) {
-            await loadJSZip();
-        }
-
         const session = document.getElementById('zg-global-session').value;
         const checkedBoxes = Array.from(document.querySelectorAll('.zg-row-check:checked'));
         const queue = [];
@@ -954,8 +894,7 @@
             return;
         }
 
-        const modeLabel = individualMode ? 'individual' : 'ZIP';
-        console.log(`🚀 [ZipGrade] Iniciando lote ${modeLabel} con ${queue.length} cursos (Sesión ${session})...`);
+        console.log(`🚀 [ZipGrade] Descargando ${queue.length} PDFs individualmente (Sesión ${session})...`);
         const btnDownload = document.getElementById('zg-btn-download-selected');
         const btnStop = document.getElementById('zg-btn-stop-download');
         const bannerEl = document.getElementById('zg-download-banner');
@@ -971,24 +910,25 @@
             btnStop.innerText = '🛑 Detener';
         }
 
-        const zip = !individualMode ? new JSZip() : null;
         let successCount = 0;
         let consecutiveErrors = 0;
+        const startTime = Date.now();
+        let totalCoolingTime = 0;
 
         for (let i = 0; i < queue.length; i++) {
             if (cancelDownloadRequested) {
-                console.warn('🛑 [ZipGrade] Proceso de lote interrumpido por el usuario.');
+                console.warn('🛑 [ZipGrade] Proceso interrumpido por el usuario.');
                 updateStatusText('Proceso detenido.');
-                alert('Proceso de empaquetado detenido.');
+                alert('Proceso detenido.');
                 break;
             }
 
             const item = queue[i];
             const currentNum = i + 1;
-            const progressPercent = ((i) / queue.length) * (individualMode ? 90 : 80);
+            const progressPercent = (i / queue.length) * 90;
 
             console.log(`--------------------------------------------------`);
-            console.log(`📦 [${modeLabel.toUpperCase()} ${currentNum}/${queue.length}] Curso: ${item.className} (ID: ${item.classId})`);
+            console.log(`📄 [${currentNum}/${queue.length}] Curso: ${item.className}`);
 
             setProgressBar(progressPercent, `Descargando PDF ${currentNum}/${queue.length}: ${item.className}`);
             updateStatusText(`Descargando ${currentNum}/${queue.length}: ${item.className}...`);
@@ -998,106 +938,36 @@
 
             if (pdfBlob) {
                 const filename = `${item.className}_${session}.pdf`;
-                if (individualMode) {
-                    downloadBlob(pdfBlob, filename);
-                    console.log(`📥 [Individual] PDF de ${item.className} descargado.`);
-                } else {
-                    // Convertir a ArrayBuffer antes de agregar al ZIP para evitar
-                    // problemas de contexto entre sandbox de Tampermonkey y JSZip
-                    const buf = await pdfBlob.arrayBuffer();
-                    zip.file(filename, buf);
-                    console.log(`📥 [ZIP] PDF de ${item.className} añadido al ZIP (${buf.byteLength} bytes).`);
-                }
+                downloadBlob(pdfBlob, filename);
+                console.log(`📥 PDF de ${item.className} descargado.`);
                 successCount++;
                 consecutiveErrors = 0;
-
-                // En modo individual, pausa extra para que el navegador procese la descarga
-                if (individualMode) {
-                    await new Promise(r => setTimeout(r, 2000));
-                }
+                await new Promise(r => setTimeout(r, 2000));
             } else {
-                console.error(`❌ No se pudo obtener PDF válido para "${item.className}". Omitido.`);
+                console.error(`❌ No se pudo obtener PDF para "${item.className}". Omitido.`);
                 updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
                 consecutiveErrors++;
             }
 
-            // Pausa entre descargas: pausa preventiva de enfriamiento cada 5 descargas exitosas (límite real de ZipGrade)
+            // Pausa entre descargas + enfriamiento cada 5 (límite de velocidad ZipGrade)
             if (i < queue.length - 1 && !cancelDownloadRequested) {
-                let pause = individualMode ? 3500 : 3000;
+                let pause = 3500;
 
-                // ZipGrade permite ~5 PDFs por ventana de ~60s — pausar 20s cada 5 descargas
                 if (successCount > 0 && successCount % 5 === 0 && consecutiveErrors === 0) {
                     const coolingTime = 20000;
-                    console.log(`⏳ Pausa de enfriamiento de ${coolingTime / 1000}s tras ${successCount} descargas (límite de velocidad ZipGrade)...`);
-                    updateStatusText(`⏳ Enfriando ${coolingTime / 1000}s tras ${successCount} descargas para evitar bloqueo del servidor...`);
+                    totalCoolingTime += coolingTime;
+                    console.log(`⏳ Enfriando ${coolingTime/1000}s tras ${successCount} descargas (límite ZipGrade)...`);
+                    updateStatusText(`⏳ Pausa de ${coolingTime/1000}s para evitar bloqueo del servidor...`);
                     await new Promise(r => setTimeout(r, coolingTime));
                 }
 
                 if (consecutiveErrors > 0) {
                     pause = Math.min(10000, pause + (consecutiveErrors * 3000));
-                    console.warn(`⏱️ ${consecutiveErrors} error(es) consecutivo(s) — pausa extendida a ${pause / 1000}s`);
+                    console.warn(`⏱️ ${consecutiveErrors} error(es) — pausa extendida a ${pause/1000}s`);
                 }
-                console.log(`⏱️ Pausa de ${pause / 1000}s antes de la siguiente descarga...`);
+                console.log(`⏱️ Pausa de ${pause/1000}s...`);
                 await new Promise(r => setTimeout(r, pause));
             }
-        }
-
-        if (successCount > 0 && !cancelDownloadRequested) {
-            if (individualMode) {
-                setProgressBar(100, '¡Descargas individuales completadas!');
-                updateStatusText(`✅ ${successCount} de ${queue.length} PDFs descargados individualmente.`);
-                console.log(`🎉 [ZipGrade] ${successCount} PDFs descargados individualmente.`);
-            } else {
-                console.log(`📂 Generando archivo ZIP con ${successCount} PDFs...`);
-                updateStatusText(`Empaquetando ${successCount} archivos en ZIP...`);
-                btnDownload.innerText = 'Empaquetando ZIP...';
-
-                setProgressBar(90, 'Generando archivo ZIP...');
-
-                try {
-                    let lastPercent = -1;
-
-                    // Timeout de 30s para la generación del ZIP (puede colgarse en sandbox)
-                    const zipPromise = zip.generateAsync({
-                        type: "blob",
-                        compression: "STORE"
-                    }, function updateCallback(metadata) {
-                        const currentPercent = Math.floor(metadata.percent);
-                        if (currentPercent !== lastPercent && currentPercent % 5 === 0) {
-                            lastPercent = currentPercent;
-                            const zipPercent = 90 + (currentPercent * 0.10);
-                            setProgressBar(zipPercent, `Generando ZIP: ${currentPercent}%`);
-                        }
-                    });
-
-                    const timeoutPromise = new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('ZIP_TIMEOUT')), 30000)
-                    );
-
-                    const content = await Promise.race([zipPromise, timeoutPromise]);
-
-                    setProgressBar(100, '¡ZIP listo!');
-                    const zipFilename = `ZipGrade_Lote_${session}.zip`;
-
-                    triggerDownloadWithBanner(content, zipFilename);
-
-                    console.log(`🎉 [ZipGrade] ¡ZIP Generado con éxito! (${content.size} bytes)`);
-                    updateStatusText(`✅ ¡ZIP listo con ${successCount} de ${queue.length} archivos!`);
-                } catch (zipErr) {
-                    const isTimeout = zipErr.message === 'ZIP_TIMEOUT';
-                    console.error(isTimeout ? '⏰ Timeout generando ZIP' : '❌ Error al generar archivo ZIP:', zipErr);
-                    updateStatusText(isTimeout
-                        ? '⏰ La generación del ZIP tomó demasiado tiempo — usa modo Individual'
-                        : '❌ Error al generar el archivo ZIP.');
-                    if (isTimeout) {
-                        alert('La generación del ZIP se ha quedado trabada. Usa el modo "Individual (sin ZIP)" para descargar los PDFs uno por uno.');
-                    }
-                }
-            }
-        } else if (!cancelDownloadRequested) {
-            console.error("❌ No se pudo obtener ningún PDF válido.");
-            updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
-            alert('No se pudo obtener ningún PDF válido. Revisa tu conexión o las plantillas seleccionadas.');
         }
 
         hideProgressBar();
@@ -1106,7 +976,31 @@
             btnStop.style.display = 'none';
         }
 
-        btnDownload.innerText = '📦 Descargar Seleccionados';
+        if (successCount > 0 && !cancelDownloadRequested) {
+            const totalTime = Math.round((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(totalTime / 60);
+            const secs = totalTime % 60;
+            const coolingSecs = Math.round(totalCoolingTime / 1000);
+            const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+            const summary = coolingSecs > 0
+                ? `✅ ${successCount} de ${queue.length} PDFs en ${timeStr} (${coolingSecs}s de espera por rate limit)`
+                : `✅ ${successCount} de ${queue.length} PDFs en ${timeStr}`;
+
+            setProgressBar(100, summary);
+            updateStatusText(summary);
+            console.log(`🎉 [ZipGrade] ${summary}`);
+            if (bannerEl) {
+                const msgEl = bannerEl.querySelector('strong') || bannerEl.querySelector('div span');
+                if (msgEl) msgEl.textContent = summary;
+                bannerEl.style.display = 'flex';
+            }
+        } else if (!cancelDownloadRequested) {
+            console.error("❌ No se pudo obtener ningún PDF.");
+            updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
+            alert('No se pudo obtener ningún PDF. Revisa tu conexión o las plantillas seleccionadas.');
+        }
+
+        btnDownload.innerText = '📄 Descargar PDFs';
         btnDownload.disabled = false;
     }
 
