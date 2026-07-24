@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      25.0
+// @version      24.8
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -582,13 +582,11 @@
                     </div>
 
                     <!-- Fila 4: Banner de descarga completada -->
-                    <div id="zg-download-banner" style="display:none; background:#ecfdf5; border:1px solid #10b981; border-radius:8px; padding:10px 16px; align-items:center; justify-content:space-between; color:#065f46;">
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <i class="fa fa-check-circle" style="font-size:20px; color:#10b981;"></i>
-                            <div>
-                                <strong style="font-size:13px; display:block;">¡Descargas completadas!</strong>
-                                <span style="font-size:11px; opacity:0.9;">Los PDFs se han descargado individualmente a tu carpeta de descargas.</span>
-                            </div>
+                    <div id="zg-download-banner" style="display:none; background:#ecfdf5; border:1px solid #10b981; border-radius:8px; padding:10px 16px; align-items:center; gap:12px; color:#065f46;">
+                        <i class="fa fa-check-circle" style="font-size:20px; color:#10b981; flex-shrink:0;"></i>
+                        <div style="display:flex; flex-direction:column; gap:2px; text-align:left;">
+                            <strong id="zg-banner-title" style="font-size:13px; font-weight:700; color:#065f46; margin:0; padding:0; display:block; text-align:left; line-height:1.3;">¡Descargas completadas!</strong>
+                            <span id="zg-banner-subtitle" style="font-size:11px; color:#047857; margin:0; padding:0; display:block; text-align:left; line-height:1.3;">Los PDFs se han descargado individualmente a tu carpeta de descargas.</span>
                         </div>
                     </div>
                 `;
@@ -981,19 +979,24 @@
             const minutes = Math.floor(totalTime / 60);
             const secs = totalTime % 60;
             const coolingSecs = Math.round(totalCoolingTime / 1000);
-            const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+            const titleText = `${successCount} de ${queue.length} PDFs descargados en ${timeStr}`;
             const summary = coolingSecs > 0
-                ? `✅ ${successCount} de ${queue.length} PDFs en ${timeStr} (${coolingSecs}s de espera por rate limit)`
-                : `✅ ${successCount} de ${queue.length} PDFs en ${timeStr}`;
+                ? `${titleText} (${coolingSecs}s de espera por límite de velocidad)`
+                : titleText;
 
             setProgressBar(100, summary);
             updateStatusText(summary);
             console.log(`🎉 [ZipGrade] ${summary}`);
-            if (bannerEl) {
-                const msgEl = bannerEl.querySelector('strong') || bannerEl.querySelector('div span');
-                if (msgEl) msgEl.textContent = summary;
-                bannerEl.style.display = 'flex';
+
+            const bannerTitle = document.getElementById('zg-banner-title');
+            const bannerSub = document.getElementById('zg-banner-subtitle');
+            if (bannerTitle) bannerTitle.textContent = titleText;
+            if (bannerSub) {
+                bannerSub.textContent = coolingSecs > 0
+                    ? `Procesado exitosamente con ${coolingSecs}s de pausa de enfriamiento anti-bloqueo.`
+                    : `Los PDFs se han descargado individualmente a tu carpeta de descargas.`;
             }
+            if (bannerEl) bannerEl.style.display = 'flex';
         } else if (!cancelDownloadRequested) {
             console.error("❌ No se pudo obtener ningún PDF.");
             updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
