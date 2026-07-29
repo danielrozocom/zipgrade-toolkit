@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      25.1
+// @version      25.2
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
 // @match        https://www.zipgrade.com/classes/*
 // @match        https://www.zipgrade.com/students/*
@@ -27,7 +27,7 @@
     }
     loadFontAwesome();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '25.1';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '25.2';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -980,6 +980,7 @@
             const minutes = Math.floor(totalTime / 60);
             const secs = totalTime % 60;
             const coolingSecs = Math.round(totalCoolingTime / 1000);
+            const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
             const titleText = `${successCount} de ${queue.length} PDFs descargados en ${timeStr}`;
             const summary = coolingSecs > 0
                 ? `${titleText} (${coolingSecs}s de espera por límite de velocidad)`
