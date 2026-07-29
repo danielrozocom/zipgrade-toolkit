@@ -1200,7 +1200,7 @@
             if (!formData.has(key)) formData.append(key, val);
         }
         if (!formData.has('quizName')) formData.append('quizName', '');
-        if (!formData.has('sortOrder')) formData.append('sortOrder', 'studentId');
+        formData.set('sortOrder', 'studentId');
 
         const bodyStr = formData.toString();
 
