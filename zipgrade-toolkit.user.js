@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      25.2
-// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/ y /students/.
-// @match        https://www.zipgrade.com/classes/*
-// @match        https://www.zipgrade.com/students/*
+// @version      25.3
+// @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
+// @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
 // @updateURL    https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
 // @grant        GM_xmlhttpRequest
@@ -27,10 +26,11 @@
     }
     loadFontAwesome();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '25.2';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '25.3';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
+    let hasSortedQuizzesInitially = false;
 
     // ==========================================
     // 2. PONDERACIÓN ACADÉMICA Y ORDENACIÓN POR GRADOS
@@ -442,6 +442,535 @@
         // Re-verificar tras renderizado dinámico de DataTables
         setTimeout(sortStudentTable, 400);
         setTimeout(sortStudentTable, 1000);
+    }
+
+    // ==========================================
+    // 6.2. INICIALIZAR EN /QUIZZES/ (ORDENAR TABLA DE QUIZZES POR CURSO Y FECHA)
+    // ==========================================
+    function formatQuizDate(dateStr) {
+        if (!dateStr) return dateStr;
+        const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) return dateStr;
+        const [_, yearStr, monthStr, dayStr] = match;
+        const year = parseInt(yearStr, 10);
+        const month = parseInt(monthStr, 10);
+        const day = parseInt(dayStr, 10);
+
+        const dateObj = new Date(year, month - 1, day);
+        if (isNaN(dateObj.getTime())) return dateStr;
+
+        const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const months = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+
+        const dayName = daysOfWeek[dateObj.getDay()];
+        const monthName = months[month - 1];
+
+        return `${dayName} ${day}/${monthName}/${year}`;
+    }
+
+    function getQuizClassWeight(row) {
+        const cell = row.cells[2];
+        if (!cell) return 99999;
+        const text = cell.innerText.trim();
+        if (!text || text === '-') return 99999;
+        return extractGradeWeight(text);
+    }
+
+    function getQuizDateValue(row) {
+        const cell = row.cells[4];
+        if (!cell) return 0;
+        const dateStr = cell.dataset.originalDate || cell.innerText.trim();
+        const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (match) {
+            return parseInt(match[1] + match[2] + match[3], 10);
+        }
+        return 0;
+    }
+
+    function createQuizzesSortControls() {
+        const tableWrapper = document.getElementById('quizTable_wrapper') || document.getElementById('quizTable');
+        if (!tableWrapper) return;
+
+        let container = document.getElementById('zg-quiz-sort-container');
+        if (container) {
+            if (container.nextSibling !== tableWrapper) {
+                tableWrapper.parentNode.insertBefore(container, tableWrapper);
+            }
+            return;
+        }
+
+        container = document.createElement('div');
+        container.id = 'zg-quiz-sort-container';
+        container.style.cssText = `
+            display: inline-flex; align-items: center; gap: 8px;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+            padding: 6px 12px; margin: 10px 0 15px 0; font-family: sans-serif; font-size: 13px;
+        `;
+
+        const savedMode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+
+        container.innerHTML = `
+            <span style="font-weight: 600; color: #475569;"><i class="fa fa-sort"></i> Modo de Orden:</span>
+            <div class="btn-group" style="margin: 0;">
+                <button id="zg-sort-mode-date" type="button" class="btn btn-xs ${savedMode === 'date-class' ? 'btn-primary' : 'btn-default'}" style="font-weight: 500;">
+                    <i class="fa fa-calendar"></i> Fecha > Curso
+                </button>
+                <button id="zg-sort-mode-class" type="button" class="btn btn-xs ${savedMode === 'class-date' ? 'btn-primary' : 'btn-default'}" style="font-weight: 500;">
+                    <i class="fa fa-graduation-cap"></i> Curso > Fecha
+                </button>
+            </div>
+        `;
+
+        tableWrapper.parentNode.insertBefore(container, tableWrapper);
+
+        const btnClass = document.getElementById('zg-sort-mode-class');
+        const btnDate = document.getElementById('zg-sort-mode-date');
+
+        btnClass.addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'class-date');
+            btnClass.classList.add('btn-primary');
+            btnClass.classList.remove('btn-default');
+            btnDate.classList.add('btn-default');
+            btnDate.classList.remove('btn-primary');
+            applyQuizzesSort();
+        });
+
+        btnDate.addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'date-class');
+            btnDate.classList.add('btn-primary');
+            btnDate.classList.remove('btn-default');
+            btnClass.classList.add('btn-default');
+            btnClass.classList.remove('btn-primary');
+            applyQuizzesSort();
+        });
+    }
+
+    function applyQuizzesSort() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+
+        const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+
+        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
+            try {
+                const dt = window.jQuery(table).DataTable();
+                const settings = dt.settings()[0];
+
+                if (settings && settings.aoColumns) {
+                    if (mode === 'class-date') {
+                        if (settings.aoColumns[2]) {
+                            settings.aoColumns[2].aDataSort = [2, 4];
+                            settings.aoColumns[2].orderData = [2, 4];
+                        }
+                        if (settings.aoColumns[4]) {
+                            settings.aoColumns[4].aDataSort = [4, 2];
+                            settings.aoColumns[4].orderData = [4, 2];
+                        }
+                        dt.order([ [2, 'asc'], [4, 'asc'] ]);
+                    } else {
+                        if (settings.aoColumns[2]) {
+                            settings.aoColumns[2].aDataSort = [2, 4];
+                            settings.aoColumns[2].orderData = [2, 4];
+                        }
+                        if (settings.aoColumns[4]) {
+                            settings.aoColumns[4].aDataSort = [4, 2];
+                            settings.aoColumns[4].orderData = [4, 2];
+                        }
+                        dt.order([ [4, 'asc'], [2, 'asc'] ]);
+                    }
+                }
+
+                dt.rows().invalidate('dom');
+                dt.draw(false);
+                console.log(`✅ [ZipGrade] Reordenado por modo (DataTables): ${mode}`);
+                return;
+            } catch (e) {
+                console.warn("No se pudo reordenar via DataTables, cayendo en fallback manual:", e);
+            }
+        }
+
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        let rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0) return;
+
+        rows.sort((a, b) => {
+            if (mode === 'class-date') {
+                const classA = getQuizClassWeight(a);
+                const classB = getQuizClassWeight(b);
+                if (classA !== classB) return classA - classB;
+
+                const dateA = getQuizDateValue(a);
+                const dateB = getQuizDateValue(b);
+                return dateA - dateB;
+            } else {
+                const dateA = getQuizDateValue(a);
+                const dateB = getQuizDateValue(b);
+                if (dateA !== dateB) return dateA - dateB;
+
+                const classA = getQuizClassWeight(a);
+                const classB = getQuizClassWeight(b);
+                return classA - classB;
+            }
+        });
+
+        const fragment = document.createDocumentFragment();
+        rows.forEach(row => fragment.appendChild(row));
+        tbody.appendChild(fragment);
+        console.log(`✅ [ZipGrade] Reordenado por modo (Manual): ${mode}`);
+    }
+
+    function sortQuizTable() {
+        console.log("⚙️ [ZipGrade] Reorganizando la página /quizzes/ por fecha y curso...");
+        ensureAllEntriesShown();
+
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+
+        let rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0) return;
+
+        rows.forEach(row => {
+            const classCell = row.cells[2];
+            if (classCell) {
+                const weight = getQuizClassWeight(row);
+                classCell.setAttribute('data-order', weight);
+                classCell.setAttribute('data-sort', weight);
+            }
+
+            const dateCell = row.cells[4];
+            if (dateCell) {
+                const originalDate = dateCell.innerText.trim();
+                if (originalDate && !dateCell.dataset.originalDate) {
+                    dateCell.dataset.originalDate = originalDate;
+                    dateCell.innerText = formatQuizDate(originalDate);
+                }
+                const dateVal = getQuizDateValue(row);
+                dateCell.setAttribute('data-order', dateVal);
+                dateCell.setAttribute('data-sort', dateVal);
+            }
+        });
+
+        const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+
+        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
+            try {
+                const dt = window.jQuery(table).DataTable();
+                const settings = dt.settings()[0];
+                if (settings && settings.aoColumns) {
+                    if (settings.aoColumns[4]) {
+                        settings.aoColumns[4].aDataSort = [4, 2];
+                        settings.aoColumns[4].orderData = [4, 2];
+                    }
+                    if (settings.aoColumns[2]) {
+                        settings.aoColumns[2].aDataSort = [2, 4];
+                        settings.aoColumns[2].orderData = [2, 4];
+                    }
+                }
+
+                dt.rows().invalidate('dom');
+
+                if (!hasSortedQuizzesInitially) {
+                    if (mode === 'class-date') {
+                        dt.order([ [2, 'asc'], [4, 'asc'] ]);
+                    } else {
+                        dt.order([ [4, 'asc'], [2, 'asc'] ]);
+                    }
+                    hasSortedQuizzesInitially = true;
+                }
+                dt.draw(false);
+                console.log("✅ [ZipGrade] DataTables re-sincronizado con ordenación secundaria de Quizzes.");
+                return;
+            } catch (e) {
+                console.warn("Error en DataTables, cayendo en fallback manual:", e);
+            }
+        }
+
+        rows.sort((a, b) => {
+            if (mode === 'class-date') {
+                const classA = getQuizClassWeight(a);
+                const classB = getQuizClassWeight(b);
+                if (classA !== classB) return classA - classB;
+
+                const dateA = getQuizDateValue(a);
+                const dateB = getQuizDateValue(b);
+                return dateA - dateB;
+            } else {
+                const dateA = getQuizDateValue(a);
+                const dateB = getQuizDateValue(b);
+                if (dateA !== dateB) return dateA - dateB;
+
+                const classA = getQuizClassWeight(a);
+                const classB = getQuizClassWeight(b);
+                return classA - classB;
+            }
+        });
+
+        const fragment = document.createDocumentFragment();
+        rows.forEach(row => fragment.appendChild(row));
+        tbody.appendChild(fragment);
+    }
+
+    function initQuizzesPage() {
+        createQuizzesSortControls();
+        sortQuizTable();
+        setTimeout(() => {
+            createQuizzesSortControls();
+            sortQuizTable();
+        }, 400);
+        setTimeout(() => {
+            createQuizzesSortControls();
+            sortQuizTable();
+        }, 1000);
+    }
+
+    // ==========================================
+    // 6.3. ORDENAR CLASES ACADÉMICAMENTE EN CREACIÓN/EDICIÓN DE QUIZ
+    // ==========================================
+    function sortQuizEditClasses() {
+        const classListUl = document.getElementById('classList');
+        if (!classListUl) return;
+
+        const items = Array.from(classListUl.querySelectorAll('li'));
+        if (items.length <= 1) return;
+
+        // Función para identificar rangos (ej: "1° - 2°", "10° - 11°")
+        function isClassRange(text) {
+            const degreeCount = (text.match(/[°ºª]/g) || []).length;
+            if (degreeCount >= 2) return true;
+            if (text.includes(' - ') && text.includes('°')) return true;
+            return false;
+        }
+
+        items.sort((a, b) => {
+            const labelA = a.querySelector('label');
+            const labelB = b.querySelector('label');
+            const textA = labelA ? labelA.innerText.trim() : '';
+            const textB = labelB ? labelB.innerText.trim() : '';
+
+            // 1. Sandbox y Teachers al final del todo
+            const isNonAcadA = textA.toLowerCase().includes('sandbox') || textA.toLowerCase().includes('teacher');
+            const isNonAcadB = textB.toLowerCase().includes('sandbox') || textB.toLowerCase().includes('teacher');
+            if (isNonAcadA && !isNonAcadB) return 1;
+            if (!isNonAcadA && isNonAcadB) return -1;
+            if (isNonAcadA && isNonAcadB) {
+                return textA.localeCompare(textB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+
+            // 2. Rangos de grados (ej: "1° - 2°") agrupados después de clases individuales, pero antes de Sandbox/Teachers
+            const isRangeA = isClassRange(textA);
+            const isRangeB = isClassRange(textB);
+            if (isRangeA && !isRangeB) return 1;
+            if (!isRangeA && isRangeB) return -1;
+
+            // 3. Ambos son rangos o ambos son individuales: ordenar por peso y luego por nombre
+            const weightA = extractGradeWeight(textA);
+            const weightB = extractGradeWeight(textB);
+            if (weightA !== weightB) return weightA - weightB;
+
+            return textA.localeCompare(textB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        // Re-apend en el orden correcto
+        items.forEach(li => classListUl.appendChild(li));
+        console.log(`✅ [ZipGrade] ${items.length} clases ordenadas académicamente (con rangos agrupados al final).`);
+    }
+
+    // ==========================================
+    // 6.4. FORMATEAR SELECTOR DE FECHA EN CREACIÓN/EDICIÓN DE QUIZ
+    // ==========================================
+    function initQuizEditPage() {
+        // Ordenar la lista de checkboxes de cursos
+        sortQuizEditClasses();
+
+        const quizDateInput = document.getElementById('quizDate');
+        if (!quizDateInput || document.getElementById('zg-quiz-date-display-text')) return;
+
+        console.log("⚙️ [ZipGrade] Inicializando formateador de fecha en la página de edición de Quiz...");
+
+        // 1. Crear contenedor
+        const wrapper = document.createElement('div');
+        wrapper.id = 'zg-quiz-date-wrapper';
+        wrapper.style.cssText = 'position: relative; width: 100%; height: 34px;';
+
+        // 2. Crear elemento de visualización
+        const displayEl = document.createElement('div');
+        displayEl.className = 'form-control';
+        displayEl.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #fff;
+            pointer-events: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            box-sizing: border-box;
+        `;
+
+        const textSpan = document.createElement('span');
+        textSpan.id = 'zg-quiz-date-display-text';
+        displayEl.appendChild(textSpan);
+
+        const icon = document.createElement('i');
+        icon.className = 'fa fa-calendar';
+        icon.style.cssText = 'color: #94a3b8; font-size: 14px;';
+        displayEl.appendChild(icon);
+
+        // 3. Colocar en el DOM
+        quizDateInput.parentNode.insertBefore(wrapper, quizDateInput);
+        wrapper.appendChild(displayEl);
+        wrapper.appendChild(quizDateInput);
+
+        // 4. Estilar el input original para que sea transparente y esté encima
+        quizDateInput.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            z-index: 2;
+            cursor: pointer;
+            box-sizing: border-box;
+            background: transparent;
+            border: none;
+        `;
+
+        // 5. Función de actualización de texto
+        function updateDisplay() {
+            const rawVal = quizDateInput.value;
+            if (rawVal) {
+                textSpan.innerText = formatQuizDate(rawVal);
+            } else {
+                textSpan.innerText = '';
+            }
+        }
+
+        // 6. Escuchar cambios
+        quizDateInput.addEventListener('input', updateDisplay);
+        quizDateInput.addEventListener('change', updateDisplay);
+
+        // Actualizar el valor inicial
+        updateDisplay();
+    }
+
+    // Helper para convertir "September 15, 2026" a "2026-09-15"
+    function parseEnglishDate(dateStr) {
+        const months = {
+            january: '01', february: '02', march: '03', april: '04',
+            may: '05', june: '06', july: '07', august: '08',
+            september: '09', october: '10', november: '11', december: '12'
+        };
+        const match = dateStr.trim().match(/^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
+        if (match) {
+            const mName = match[1].toLowerCase();
+            const day = match[2].padStart(2, '0');
+            const year = match[3];
+            const month = months[mName];
+            if (month) {
+                return `${year}-${month}-${day}`;
+            }
+        }
+        return null;
+    }
+
+    async function updateQuizDateViaEdit(targetDate) {
+        console.log(`⏳ [ZipGrade] Heredando la fecha original del quiz: ${targetDate}...`);
+        const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)/);
+        if (!quizIdMatch) return;
+        const quizId = quizIdMatch[1];
+        const editUrl = `/quiz/${quizId}/edit/`;
+
+        try {
+            const resp = await fetch(editUrl);
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+            const html = await resp.text();
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const quizName = doc.getElementById('quizName')?.value || '';
+            const answerSheet = doc.getElementById('answerSheet')?.value || doc.querySelector('select[name="answerSheet"]')?.value || '';
+            const folder = doc.querySelector('select[name="folder"]')?.value || '';
+            const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
+            const classInputs = Array.from(doc.querySelectorAll('input[name="classList"]:checked'));
+            
+            const params = new URLSearchParams();
+            params.append('quizName', quizName);
+            params.append('answerSheet', answerSheet);
+            params.append('quizDate', targetDate); // Asignar fecha heredada
+            params.append('folder', folder);
+            params.append('csrf_token', csrfToken);
+            
+            classInputs.forEach(inp => {
+                params.append('classList', inp.value);
+            });
+
+            const saveResp = await fetch(editUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: params.toString()
+            });
+
+            if (saveResp.ok) {
+                console.log(`✅ [ZipGrade] Fecha heredada exitosamente y quiz actualizado: ${targetDate}`);
+                window.location.reload();
+            } else {
+                console.warn("Fallo al actualizar la fecha heredada.");
+            }
+        } catch (e) {
+            console.error("Error al heredar fecha de quiz:", e);
+        }
+    }
+
+    function initQuizDetailPage() {
+        // 1. Interceptar click en submit del modal "Copy Quiz" para almacenar la fecha origen
+        const copyForm = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
+        if (copyForm) {
+            copyForm.addEventListener('submit', () => {
+                const tds = Array.from(document.querySelectorAll('td'));
+                let dateText = '';
+                for (let i = 0; i < tds.length; i++) {
+                    if (tds[i].innerText.includes('Date:')) {
+                        const valTd = tds[i].nextElementSibling;
+                        if (valTd) {
+                            dateText = valTd.innerText.trim();
+                        }
+                        break;
+                    }
+                }
+                if (dateText) {
+                    const parsedDate = parseEnglishDate(dateText);
+                    if (parsedDate) {
+                        sessionStorage.setItem('zg_copy_pending', 'true');
+                        sessionStorage.setItem('zg_copy_source_date', parsedDate);
+                        console.log("💾 [ZipGrade] Guardada fecha de origen para copia:", parsedDate);
+                    }
+                }
+            });
+        }
+
+        // 2. Si venimos de una acción de copia pendiente en este nuevo quiz, procesar
+        if (sessionStorage.getItem('zg_copy_pending') === 'true') {
+            const targetDate = sessionStorage.getItem('zg_copy_source_date');
+            sessionStorage.removeItem('zg_copy_pending');
+            sessionStorage.removeItem('zg_copy_source_date');
+
+            if (targetDate) {
+                updateQuizDateViaEdit(targetDate);
+            }
+        }
     }
 
     // ==========================================
@@ -1346,6 +1875,24 @@
             document.addEventListener('DOMContentLoaded', initStudentsPage);
         } else {
             initStudentsPage();
+        }
+    } else if (window.location.pathname.includes('/quizzes')) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initQuizzesPage);
+        } else {
+            initQuizzesPage();
+        }
+    } else if (window.location.pathname.includes('/newQuiz/edit/') || (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/edit/'))) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initQuizEditPage);
+        } else {
+            initQuizEditPage();
+        }
+    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initQuizDetailPage);
+        } else {
+            initQuizDetailPage();
         }
     }
 })();
