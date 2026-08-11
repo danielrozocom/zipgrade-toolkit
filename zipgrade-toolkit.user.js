@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      27.5
+// @version      27.6
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -60,7 +60,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '27.5';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '27.6';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1029,7 +1029,8 @@
             }
         }
 
-        const classMap = await getClassStudentCountMap();
+        // Insertar la celda "Estado" de forma SÍNCRONA (antes de cualquier await)
+        // para que la columna nunca quede desalineada respecto a "Descarga Rápida".
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         for (const row of rows) {
             let statusTd = row.querySelector('.zg-status-td');
@@ -1046,8 +1047,12 @@
                     row.appendChild(statusTd);
                 }
             }
+        }
 
-            if (statusTd.dataset.zgStatusDone === 'true') continue;
+        const classMap = await getClassStudentCountMap();
+        for (const row of rows) {
+            const statusTd = row.querySelector('.zg-status-td');
+            if (!statusTd || statusTd.dataset.zgStatusDone === 'true') continue;
 
             const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
             if (!link) {
