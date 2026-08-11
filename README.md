@@ -16,9 +16,9 @@ Haz clic en el siguiente botón para instalar directamente en Tampermonkey con u
 
 ## ✨ Características Principales
 
-1. **📦 Empaquetado y Descarga en Lote en ZIP**:
-   - Descarga múltiples paquetes de exámenes PDF organizados por sesión (`S1`/`S2`) en un solo archivo comprimido `.zip`.
-   - Incluye barra de progreso visual en tiempo real y banner de descarga directa por si el navegador bloquea ventanas emergentes.
+1. **📦 Descarga en Lote de PDFs (descarga individual)**:
+   - Descarga múltiples paquetes de exámenes PDF organizados por sesión (`S1`/`S2`). Cada PDF se **descarga de forma individual** a tu carpeta de descargas (el empaquetado en un solo `.zip` no es posible por las restricciones del navegador y del servidor de ZipGrade).
+   - Incluye barra de progreso visual en tiempo real y banner de descarga completada.
 
 2. **⏱️ Prevención de Timeouts y Reintentos Adaptativos**:
    - Peticiones con tiempos de espera ampliados (45s - 90s) y pausas inteligentes entre peticiones para prevenir bloqueos de rate-limit en ZipGrade.
