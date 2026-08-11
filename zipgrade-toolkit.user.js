@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      25.3
+// @version      26.4
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -26,7 +26,41 @@
     }
     loadFontAwesome();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '25.3';
+    // ==========================================
+    // 1.1. ESTILOS COMPARTIDOS DEL TOOLKIT
+    // ==========================================
+    function injectSharedStyles() {
+        if (document.getElementById('zg-shared-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'zg-shared-styles';
+        style.textContent = `
+            .zg-counter-badge {
+                font-size: 10px;
+                padding: 2px 8px;
+                border-radius: 10px;
+                background: rgba(255,255,255,0.25);
+                color: #ffffff;
+                font-weight: 600;
+                line-height: 1.4;
+            }
+            .zg-counter-badge.zg-badge-active {
+                background: #2563eb;
+                color: #ffffff;
+            }
+            .zg-counter-badge.zg-badge-on-light {
+                background: #cbd5e1;
+                color: #ffffff;
+            }
+            .zg-counter-badge.zg-badge-on-light.zg-badge-active {
+                background: #2563eb;
+                color: #ffffff;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    injectSharedStyles();
+
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '26.4';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -279,8 +313,7 @@
         const counterEl = document.getElementById('zg-counter-badge');
         if (counterEl) {
             counterEl.innerText = `${checkedCount} de ${totalCount} marcados`;
-            counterEl.style.background = checkedCount > 0 ? '#2563eb' : 'rgba(255,255,255,0.25)';
-            counterEl.style.color = '#ffffff';
+            counterEl.classList.toggle('zg-badge-active', checkedCount > 0);
         }
     }
 
@@ -491,60 +524,146 @@
         const tableWrapper = document.getElementById('quizTable_wrapper') || document.getElementById('quizTable');
         if (!tableWrapper) return;
 
-        let container = document.getElementById('zg-quiz-sort-container');
-        if (container) {
-            if (container.nextSibling !== tableWrapper) {
-                tableWrapper.parentNode.insertBefore(container, tableWrapper);
-            }
-            return;
-        }
-
-        container = document.createElement('div');
-        container.id = 'zg-quiz-sort-container';
-        container.style.cssText = `
-            display: inline-flex; align-items: center; gap: 8px;
-            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-            padding: 6px 12px; margin: 10px 0 15px 0; font-family: sans-serif; font-size: 13px;
-        `;
-
         const savedMode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
 
-        container.innerHTML = `
-            <span style="font-weight: 600; color: #475569;"><i class="fa fa-sort"></i> Modo de Orden:</span>
-            <div class="btn-group" style="margin: 0;">
-                <button id="zg-sort-mode-date" type="button" class="btn btn-xs ${savedMode === 'date-class' ? 'btn-primary' : 'btn-default'}" style="font-weight: 500;">
-                    <i class="fa fa-calendar"></i> Fecha > Curso
-                </button>
-                <button id="zg-sort-mode-class" type="button" class="btn btn-xs ${savedMode === 'class-date' ? 'btn-primary' : 'btn-default'}" style="font-weight: 500;">
-                    <i class="fa fa-graduation-cap"></i> Curso > Fecha
-                </button>
-            </div>
-        `;
+        // Card del toolkit (mismo estilo que en /classes/)
+        let card = document.getElementById('zg-quiz-top-bar');
+        if (!card) {
+            card = document.createElement('div');
+            card.id = 'zg-quiz-top-bar';
+            card.style.cssText = `
+                display: flex; flex-direction: column; gap: 12px;
+                background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
+                padding: 16px 20px; margin: 0 auto 18px auto; width: 100%;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.06); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                box-sizing: border-box;
+            `;
+            card.innerHTML = `
+                <!-- Fila 1: Título + Selección + Orden -->
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
+                            <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
+                        </span>
+                        <button id="zg-quiz-btn-select-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <i class="fa fa-check-square-o"></i> Seleccionar Todo
+                        </button>
+                        <button id="zg-quiz-btn-deselect-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <i class="fa fa-square-o"></i> Deseleccionar Todo
+                        </button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-weight:600; color:#475569; font-size:13px;"><i class="fa fa-sort"></i> Modo de Orden:</span>
+                        <div class="btn-group" style="margin:0;">
+                            <button id="zg-sort-mode-date" type="button" class="btn btn-xs ${savedMode === 'date-class' ? 'btn-primary' : 'btn-default'}" style="font-weight:500;">
+                                <i class="fa fa-calendar"></i> Fecha > Curso
+                            </button>
+                            <button id="zg-sort-mode-class" type="button" class="btn btn-xs ${savedMode === 'class-date' ? 'btn-primary' : 'btn-default'}" style="font-weight:500;">
+                                <i class="fa fa-graduation-cap"></i> Curso > Fecha
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
-        tableWrapper.parentNode.insertBefore(container, tableWrapper);
+                <!-- Fila 2: Acción principal + estado -->
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                    <button id="zg-btn-quiz-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                        <i class="fa fa-download"></i> Descargar Resultados
+                    </button>
+                    <div id="zg-quiz-status-text" style="font-size:12px; color:#475569; font-weight:500;">
+                        <i class="fa fa-info-circle"></i> Listo para procesar.
+                    </div>
+                </div>
 
+                <!-- Fila 3: Barra de progreso -->
+                <div id="zg-quiz-progress-container" style="display:none; flex-direction:column; gap:4px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px;">
+                    <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:600; color:#334155;">
+                        <span id="zg-quiz-progress-title">Procesando lote...</span>
+                        <span id="zg-quiz-progress-percent">0%</span>
+                    </div>
+                    <div style="width:100%; background:#cbd5e1; height:8px; border-radius:4px; overflow:hidden;">
+                        <div id="zg-quiz-progress-bar" style="width:0%; background:#2563eb; height:100%; transition:width 0.3s ease;"></div>
+                    </div>
+                </div>
+
+                <!-- Fila 4: Banner de descarga completada -->
+                <div id="zg-quiz-download-banner" style="display:none; background:#ecfdf5; border:1px solid #10b981; border-radius:8px; padding:10px 16px; align-items:center; gap:12px; color:#065f46;">
+                    <i class="fa fa-check-circle" style="font-size:20px; color:#10b981; flex-shrink:0;"></i>
+                    <div style="display:flex; flex-direction:column; gap:2px; text-align:left;">
+                        <strong id="zg-quiz-banner-title" style="font-size:13px; font-weight:700; color:#065f46; margin:0; padding:0; display:block; text-align:left; line-height:1.3;">¡Descargas completadas!</strong>
+                        <span id="zg-quiz-banner-subtitle" style="font-size:11px; color:#047857; margin:0; padding:0; display:block; text-align:left; line-height:1.3;">Los resultados se han descargado a tu carpeta de descargas.</span>
+                    </div>
+                </div>
+            `;
+        }
+        // Insertar el card justo encima de la tabla (debajo del Search), como en /classes/
+        const table = document.getElementById('quizTable');
+        const anchor = table || tableWrapper;
+        if (card.nextSibling !== anchor) {
+            anchor.parentNode.insertBefore(card, anchor);
+        }
+
+        // Botones de orden
         const btnClass = document.getElementById('zg-sort-mode-class');
         const btnDate = document.getElementById('zg-sort-mode-date');
+        if (btnClass && !btnClass.dataset.zgBound) {
+            btnClass.dataset.zgBound = 'true';
+            btnClass.addEventListener('click', (e) => {
+                e.preventDefault();
+                localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'class-date');
+                btnClass.classList.add('btn-primary');
+                btnClass.classList.remove('btn-default');
+                btnDate.classList.add('btn-default');
+                btnDate.classList.remove('btn-primary');
+                applyQuizzesSort();
+            });
+        }
+        if (btnDate && !btnDate.dataset.zgBound) {
+            btnDate.dataset.zgBound = 'true';
+            btnDate.addEventListener('click', (e) => {
+                e.preventDefault();
+                localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'date-class');
+                btnDate.classList.add('btn-primary');
+                btnDate.classList.remove('btn-default');
+                btnClass.classList.add('btn-default');
+                btnClass.classList.remove('btn-primary');
+                applyQuizzesSort();
+            });
+        }
 
-        btnClass.addEventListener('click', (e) => {
-            e.preventDefault();
-            localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'class-date');
-            btnClass.classList.add('btn-primary');
-            btnClass.classList.remove('btn-default');
-            btnDate.classList.add('btn-default');
-            btnDate.classList.remove('btn-primary');
-            applyQuizzesSort();
-        });
+        // Botones Seleccionar/Deseleccionar Todo
+        const btnSelAll = document.getElementById('zg-quiz-btn-select-all');
+        const btnDeselAll = document.getElementById('zg-quiz-btn-deselect-all');
+        if (btnSelAll && !btnSelAll.dataset.zgBound) {
+            btnSelAll.dataset.zgBound = 'true';
+            btnSelAll.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = true);
+                const masterChk = document.getElementById('zg-quiz-master-check');
+                if (masterChk) masterChk.checked = true;
+                updateQuizResultsCounter();
+            });
+        }
+        if (btnDeselAll && !btnDeselAll.dataset.zgBound) {
+            btnDeselAll.dataset.zgBound = 'true';
+            btnDeselAll.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = false);
+                const masterChk = document.getElementById('zg-quiz-master-check');
+                if (masterChk) masterChk.checked = false;
+                updateQuizResultsCounter();
+            });
+        }
 
-        btnDate.addEventListener('click', (e) => {
-            e.preventDefault();
-            localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'date-class');
-            btnDate.classList.add('btn-primary');
-            btnDate.classList.remove('btn-default');
-            btnClass.classList.add('btn-default');
-            btnClass.classList.remove('btn-primary');
-            applyQuizzesSort();
-        });
+        // Botón Descargar Resultados (lote)
+        const bulkBtn = document.getElementById('zg-btn-quiz-download-selected');
+        if (bulkBtn && !bulkBtn.dataset.zgBound) {
+            bulkBtn.dataset.zgBound = 'true';
+            bulkBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                await downloadSelectedQuizResults(bulkBtn);
+            });
+        }
     }
 
     function applyQuizzesSort() {
@@ -568,7 +687,7 @@
                             settings.aoColumns[4].aDataSort = [4, 2];
                             settings.aoColumns[4].orderData = [4, 2];
                         }
-                        dt.order([ [2, 'asc'], [4, 'asc'] ]);
+                        dt.order([[2, 'asc'], [4, 'asc']]);
                     } else {
                         if (settings.aoColumns[2]) {
                             settings.aoColumns[2].aDataSort = [2, 4];
@@ -578,7 +697,7 @@
                             settings.aoColumns[4].aDataSort = [4, 2];
                             settings.aoColumns[4].orderData = [4, 2];
                         }
-                        dt.order([ [4, 'asc'], [2, 'asc'] ]);
+                        dt.order([[4, 'asc'], [2, 'asc']]);
                     }
                 }
 
@@ -677,9 +796,9 @@
 
                 if (!hasSortedQuizzesInitially) {
                     if (mode === 'class-date') {
-                        dt.order([ [2, 'asc'], [4, 'asc'] ]);
+                        dt.order([[2, 'asc'], [4, 'asc']]);
                     } else {
-                        dt.order([ [4, 'asc'], [2, 'asc'] ]);
+                        dt.order([[4, 'asc'], [2, 'asc']]);
                     }
                     hasSortedQuizzesInitially = true;
                 }
@@ -716,17 +835,337 @@
         tbody.appendChild(fragment);
     }
 
+    // ==========================================
+    // 6.2.1. COLUMNA "RESULTADOS" EN /QUIZZES/ (DESCARGA INDIVIDUAL Y MASIVA)
+    // ==========================================
+    function updateQuizResultsCounter() {
+        const checked = document.querySelectorAll('.zg-quiz-check:checked').length;
+        const total = document.querySelectorAll('.zg-quiz-check').length;
+        const badge = document.getElementById('zg-quiz-counter-badge');
+        if (badge) {
+            badge.innerText = `${checked} de ${total} marcados`;
+            badge.classList.toggle('zg-badge-active', checked > 0);
+        }
+    }
+
+    function initQuizzesResultsColumn() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+
+        // Expandir el ancho disponible (como en /classes/ y /students/)
+        const mainCol = table.closest('.col-md-8') || table.closest('.col-md-9') || table.closest('.col-md-12');
+        if (mainCol) {
+            mainCol.style.width = '100%';
+            mainCol.style.marginLeft = '0';
+        }
+        // Quitar el ancho fijo inline de la tabla para que use todo el contenedor
+        table.style.width = '100%';
+
+        // 1. Cabecera: añadir TH al final (mismo estilo que /classes/, no ordenable)
+        const theadRow = table.querySelector('thead tr');
+        if (theadRow && !theadRow.querySelector('.zg-quiz-th')) {
+            const th = document.createElement('th');
+            th.className = 'text-center zg-quiz-th sorting_disabled';
+            th.style.cssText = 'vertical-align:middle; width:260px; color:#ffffff;';
+            th.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" id="zg-quiz-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
+                        <span style="font-weight:700; font-size:12px; color:#ffffff;">Descarga Rápida</span>
+                    </div>
+                    <span id="zg-quiz-counter-badge" class="zg-counter-badge">0 de 0 marcados</span>
+                </div>
+            `;
+            theadRow.appendChild(th);
+
+            th.querySelector('#zg-quiz-master-check').addEventListener('change', (e) => {
+                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = e.target.checked);
+                updateQuizResultsCounter();
+            });
+        }
+
+        // 2. Filas: añadir TD con checkbox + botón individual
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        rows.forEach(row => {
+            if (row.querySelector('.zg-quiz-td')) return;
+            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+            if (!link) {
+                const emptyTd = document.createElement('td');
+                emptyTd.className = 'zg-quiz-td';
+                row.appendChild(emptyTd);
+                return;
+            }
+            const href = link.getAttribute('href');
+            const quizName = link.innerText.trim();
+            const quizAllBaseUrl = new URL(href, window.location.origin).pathname;
+
+            const td = document.createElement('td');
+            td.className = 'zg-quiz-td';
+            td.style.cssText = 'vertical-align:middle; text-align:center;';
+            td.innerHTML = `
+                <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
+                    <input type="checkbox" class="zg-quiz-check" data-quiz-url="${quizAllBaseUrl}" data-quiz-name="${quizName.replace(/"/g, '&quot;')}" style="margin:0; cursor:pointer; width:15px; height:15px;" />
+                    <button class="zg-btn-quiz-download btn btn-default btn-xs" style="padding:3px 8px;" title="Descargar resultados de este quiz (formato personalizado)">
+                        <i class="fa fa-cloud-download" style="color:#2563eb;"></i>
+                    </button>
+                </div>
+            `;
+            row.appendChild(td);
+
+            const chk = td.querySelector('.zg-quiz-check');
+            chk.addEventListener('change', updateQuizResultsCounter);
+
+            // Selector de formato en la celda (siempre visible, estilo /classes/)
+            const select = document.createElement('select');
+            select.className = 'zg-quiz-format-select';
+            select.style.cssText = 'padding:4px 6px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; width:165px; max-width:165px; background:#fff; cursor:pointer;';
+            select.innerHTML = '<option value="">Cargando...</option>';
+            select.disabled = true;
+            select.addEventListener('change', () => {
+                if (select.value !== '' && select.selectedOptions[0]?.dataset.valid === '1') {
+                    chk.checked = true;
+                }
+                updateQuizResultsCounter();
+            });
+            chk.after(select);
+
+            // Cargar formatos del quiz de una vez
+            (async () => {
+                try {
+                    const formats = await fetchCustomExportFormats(quizAllBaseUrl);
+                    td.dataset.formats = JSON.stringify(formats.map(f => ({
+                        name: f.name,
+                        csv: f.csv,
+                        xlsx: f.xlsx
+                    })));
+
+                    if (formats.length === 0) {
+                        select.innerHTML = '<option value="">Sin formato</option>';
+                        select.disabled = true;
+                    } else if (formats.length === 1) {
+                        // Un solo formato: preseleccionado y bloqueado
+                        select.innerHTML = `<option value="0" data-valid="1" selected>${formats[0].name}</option>`;
+                        select.disabled = true;
+                        select.style.background = '#f1f5f9';
+                        select.style.color = '#64748b';
+                        select.style.cursor = 'not-allowed';
+                    } else {
+                        // Varios formatos: selector habilitado
+                        select.innerHTML = '<option value="">-- Seleccionar --</option>' +
+                            formats.map((f, i) => `<option value="${i}" data-valid="1">${f.name}</option>`).join('');
+                        select.disabled = false;
+                    }
+                } catch (err) {
+                    console.warn(`⚠️ [ZipGrade] No se pudieron cargar formatos de "${quizName}":`, err);
+                    select.innerHTML = '<option value="">Error</option>';
+                    select.disabled = true;
+                }
+            })();
+
+            const rowBtn = td.querySelector('.zg-btn-quiz-download');
+            rowBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+
+                // Usar el formato elegido en el selector de la fila si es válido
+                if (td.dataset.formats && select.value !== '') {
+                    const formats = JSON.parse(td.dataset.formats);
+                    const chosen = formats[parseInt(select.value, 10)];
+                    if (chosen) {
+                        const originalHtml = rowBtn.innerHTML;
+                        rowBtn.disabled = true;
+                        rowBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
+                        try {
+                            const type = chosen.xlsx ? 'XLSX' : 'CSV';
+                            const filename = await downloadCustomExport(chosen, type);
+                            console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
+                        } catch (err) {
+                            console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
+                            alert(`No se pudo descargar los resultados: ${err.message}`);
+                        } finally {
+                            rowBtn.disabled = false;
+                            rowBtn.innerHTML = originalHtml;
+                        }
+                        return;
+                    }
+                }
+
+                // Sin formato elegido: si el quiz no tiene o aún carga, avisar
+                if (td.dataset.formats && JSON.parse(td.dataset.formats).length === 0) {
+                    alert(`"${quizName}" no tiene un formato personalizado creado.`);
+                    return;
+                }
+                await handleResultsDownloadClick(rowBtn, quizAllBaseUrl, true);
+            });
+        });
+
+        updateQuizResultsCounter();
+
+        // 3. Desactivar ordenación/búsqueda de DataTables en la columna nueva
+        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
+            try {
+                const dt = window.jQuery(table).DataTable();
+                const settings = dt.settings()[0];
+                if (settings && settings.aoColumns) {
+                    const lastIdx = settings.aoColumns.length - 1;
+                    const col = settings.aoColumns[lastIdx];
+                    if (col && col.bSortable !== false) {
+                        col.bSortable = false;
+                        col.bSearchable = false;
+                        col.aDataSort = [lastIdx];
+                        col.orderData = [lastIdx];
+                        if (settings.aaSorting) {
+                            settings.aaSorting = settings.aaSorting.filter(s => s[0] !== lastIdx);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn("No se pudo desactivar ordenación de la columna Resultados:", e);
+            }
+        }
+
+    }
+
+    // Helpers de UI del card de /quizzes/
+    function updateQuizStatusText(msg) {
+        const el = document.getElementById('zg-quiz-status-text');
+        if (el) el.innerText = msg;
+    }
+
+    function setQuizProgressBar(percent, title = "Procesando...") {
+        const container = document.getElementById('zg-quiz-progress-container');
+        const titleEl = document.getElementById('zg-quiz-progress-title');
+        const percentEl = document.getElementById('zg-quiz-progress-percent');
+        const barEl = document.getElementById('zg-quiz-progress-bar');
+        if (container && titleEl && percentEl && barEl) {
+            container.style.display = 'flex';
+            titleEl.innerText = title;
+            percentEl.innerText = `${Math.round(percent)}%`;
+            barEl.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+        }
+    }
+
+    function hideQuizProgressBar() {
+        const container = document.getElementById('zg-quiz-progress-container');
+        if (container) container.style.display = 'none';
+    }
+
+    // Descarga masiva de resultados para los quizzes marcados en /quizzes/
+    async function downloadSelectedQuizResults(bulkBtn) {
+        const checked = Array.from(document.querySelectorAll('.zg-quiz-check:checked'));
+        if (checked.length === 0) {
+            alert('Marca al menos un quiz en la columna "Descarga Rápida".');
+            return;
+        }
+
+        const bannerEl = document.getElementById('zg-quiz-download-banner');
+        if (bannerEl) bannerEl.style.display = 'none';
+
+        const originalHtml = bulkBtn.innerHTML;
+        bulkBtn.disabled = true;
+        const startTime = Date.now();
+
+        let successCount = 0;
+        let skipCount = 0;
+        for (let i = 0; i < checked.length; i++) {
+            const chk = checked[i];
+            const quizUrl = chk.dataset.quizUrl;
+            const quizName = chk.dataset.quizName;
+            const progressPercent = (i / checked.length) * 90;
+
+            setQuizProgressBar(progressPercent, `Descargando ${i + 1}/${checked.length}: ${quizName}`);
+            updateQuizStatusText(`Descargando ${i + 1}/${checked.length}: ${quizName}...`);
+            bulkBtn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> ${i + 1}/${checked.length}`;
+
+            try {
+                // Si la fila tiene un formato elegido en su selector, usarlo; si no, el primero
+                const td = chk.closest('.zg-quiz-td');
+                const rowSelect = td ? td.querySelector('.zg-quiz-format-select') : null;
+                let fmt = null;
+
+                if (rowSelect && td.dataset.formats && rowSelect.value !== '') {
+                    const cached = JSON.parse(td.dataset.formats);
+                    fmt = cached[parseInt(rowSelect.value, 10)];
+                }
+
+                if (!fmt) {
+                    const formats = await fetchCustomExportFormats(quizUrl);
+                    if (formats.length === 0) {
+                        console.warn(`⚠️ [ZipGrade] "${quizName}" no tiene formatos personalizados. Omitido.`);
+                        skipCount++;
+                        continue;
+                    }
+                    fmt = formats[0];
+                }
+
+                const type = fmt.xlsx ? 'XLSX' : 'CSV';
+                const filename = await downloadCustomExport(fmt, type);
+                console.log(`📥 [ZipGrade] ${i + 1}/${checked.length} descargado: ${filename}`);
+                successCount++;
+                await new Promise(r => setTimeout(r, 2000));
+            } catch (err) {
+                console.error(`❌ [ZipGrade] Error descargando "${quizName}":`, err);
+                skipCount++;
+            }
+            // Pausa anti rate-limit entre quizzes
+            if (i < checked.length - 1) {
+                await new Promise(r => setTimeout(r, 3000));
+            }
+        }
+
+        bulkBtn.innerHTML = originalHtml;
+        bulkBtn.disabled = false;
+        hideQuizProgressBar();
+
+        const totalTime = Math.round((Date.now() - startTime) / 1000);
+        const minutes = Math.floor(totalTime / 60);
+        const secs = totalTime % 60;
+        const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+        const summary = `${successCount} de ${checked.length} resultados descargados en ${timeStr}` + (skipCount > 0 ? ` (${skipCount} omitidos)` : '');
+        console.log(`🎉 [ZipGrade] ${summary}`);
+        updateQuizStatusText(summary);
+
+        if (successCount > 0) {
+            const bannerTitle = document.getElementById('zg-quiz-banner-title');
+            const bannerSub = document.getElementById('zg-quiz-banner-subtitle');
+            if (bannerTitle) bannerTitle.textContent = summary;
+            if (bannerSub) {
+                bannerSub.textContent = skipCount > 0
+                    ? `${skipCount} quiz(zes) se omitieron por no tener formato personalizado.`
+                    : 'Los resultados se han descargado a tu carpeta de descargas.';
+            }
+            if (bannerEl) bannerEl.style.display = 'flex';
+        } else {
+            alert('No se pudo descargar ningún resultado. Verifica que los quizzes tengan un Export Format personalizado.');
+        }
+    }
+
     function initQuizzesPage() {
         createQuizzesSortControls();
         sortQuizTable();
+        initQuizzesResultsColumn();
         setTimeout(() => {
             createQuizzesSortControls();
             sortQuizTable();
+            initQuizzesResultsColumn();
         }, 400);
         setTimeout(() => {
             createQuizzesSortControls();
             sortQuizTable();
+            initQuizzesResultsColumn();
         }, 1000);
+
+        // Re-insertar la columna "Resultados" si DataTables redibuja la tabla (ordenar, filtrar, paginar)
+        const tbody = document.querySelector('#quizTable tbody');
+        if (tbody && !window._zgQuizTableObserver) {
+            let reinsertTimer = null;
+            window._zgQuizTableObserver = new MutationObserver(() => {
+                if (reinsertTimer) clearTimeout(reinsertTimer);
+                reinsertTimer = setTimeout(() => {
+                    initQuizzesResultsColumn();
+                }, 150);
+            });
+            window._zgQuizTableObserver.observe(tbody, { childList: true });
+        }
     }
 
     // ==========================================
@@ -787,6 +1226,12 @@
     function initQuizEditPage() {
         // Ordenar la lista de checkboxes de cursos
         sortQuizEditClasses();
+
+        // Corregir formato antiguo de nombre de quiz si aplica
+        const quizNameInput = document.getElementById('quizName');
+        if (quizNameInput) {
+            quizNameInput.value = adjustQuizNameFormat(quizNameInput.value);
+        }
 
         const quizDateInput = document.getElementById('quizDate');
         if (!quizDateInput || document.getElementById('zg-quiz-date-display-text')) return;
@@ -863,6 +1308,32 @@
         updateDisplay();
     }
 
+    // Helper para formatear nombres de quiz antiguos al nuevo formato "Template E.S.A. | Class | Period | Session"
+    function adjustQuizNameFormat(nameVal) {
+        if (!nameVal) return nameVal;
+
+        let cleanVal = nameVal.trim();
+        let suffix = '';
+        if (cleanVal.toLowerCase().endsWith(' copy')) {
+            cleanVal = cleanVal.substring(0, cleanVal.length - 5).trim();
+            suffix = ' copy';
+        }
+
+        const parts = cleanVal.split('|').map(p => p.trim());
+        if (parts.length >= 4 && parts[0] === 'Template E.S.A.') {
+            const sessVal = parts[1];
+            // Si el segundo elemento tiene formato de sesión (ej: S1, S2, S10), es el formato viejo
+            if (/^S\d+$/i.test(sessVal)) {
+                const prefix = parts[0];
+                const session = parts[1];
+                const period = parts[2];
+                const classVal = parts[3];
+                return `${prefix} | ${classVal} | ${period} | ${session}${suffix}`;
+            }
+        }
+        return nameVal;
+    }
+
     // Helper para convertir "September 15, 2026" a "2026-09-15"
     function parseEnglishDate(dateStr) {
         const months = {
@@ -899,18 +1370,19 @@
             const doc = parser.parseFromString(html, 'text/html');
 
             const quizName = doc.getElementById('quizName')?.value || '';
+            const adjustedQuizName = adjustQuizNameFormat(quizName);
             const answerSheet = doc.getElementById('answerSheet')?.value || doc.querySelector('select[name="answerSheet"]')?.value || '';
             const folder = doc.querySelector('select[name="folder"]')?.value || '';
             const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
             const classInputs = Array.from(doc.querySelectorAll('input[name="classList"]:checked'));
-            
+
             const params = new URLSearchParams();
-            params.append('quizName', quizName);
+            params.append('quizName', adjustedQuizName);
             params.append('answerSheet', answerSheet);
             params.append('quizDate', targetDate); // Asignar fecha heredada
             params.append('folder', folder);
             params.append('csrf_token', csrfToken);
-            
+
             classInputs.forEach(inp => {
                 params.append('classList', inp.value);
             });
@@ -934,7 +1406,205 @@
         }
     }
 
+    // ==========================================
+    // 6.5. DESCARGA DE RESULTADOS PERSONALIZADA EN /QUIZ/.../ALL/
+    // ==========================================
+    // Trunca un nombre de quiz/archivo hasta la sesión (S1, S2, ...) inclusive.
+    // Ej: "Template E.S.A. _ 10_ - 11_ _ P3 _ S2-all-Quiz Format Masive-2026-08-10 23_39_24"
+    //     -> "Template E.S.A. _ 10_ - 11_ _ P3 _ S2"
+    function truncateNameToSession(name) {
+        if (!name) return name;
+        const m = name.match(/^(.*?\bS\d+\b)/i);
+        if (m) return m[1].replace(/[\s_\-|]+$/g, '').trim();
+        return name.trim();
+    }
+
+    // Construye "Resultados_<nombre truncado hasta sesión>" a partir del filename del servidor
+    // o, como respaldo, del <title> de la página del quiz.
+    function buildResultsFilename(serverFilename, pageTitle, extension) {
+        let base = '';
+        if (serverFilename) {
+            base = serverFilename.replace(/\.[^.]+$/, '');
+        } else if (pageTitle) {
+            base = pageTitle.replace(/^ZipGrade:\s*Quiz:\s*/i, '').replace(/\|/g, '_');
+        }
+        base = truncateNameToSession(base);
+        // Sanitizar caracteres no válidos en nombres de archivo de Windows
+        base = base.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
+        return `Resultados_${base}.${extension}`;
+    }
+
+    // Obtiene los formatos de exportación personalizados del quiz actual
+    async function fetchCustomExportFormats(quizAllBaseUrl) {
+        const listUrl = `${quizAllBaseUrl}exportFormat/list/`;
+        const res = await customRequest({ method: 'GET', url: listUrl }, 45000);
+        if (res.status !== 200) throw new Error(`HTTP ${res.status} al obtener formatos de exportación`);
+
+        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+        const formats = [];
+        // Enlaces tipo: /quiz/<id>/all/exportFormat/<formatId>/export/CSV/ o /export/XLSX/
+        const links = Array.from(doc.querySelectorAll('a[href*="/exportFormat/"][href*="/export/"]'));
+        links.forEach(a => {
+            const href = a.getAttribute('href');
+            const m = href.match(/\/exportFormat\/([^/]+)\/export\/(CSV|XLSX)\//i);
+            if (!m) return;
+            const formatId = m[1];
+            const type = m[2].toUpperCase();
+            // Nombre del formato: primera celda de la fila del enlace
+            const row = a.closest('tr');
+            let formatName = formatId;
+            if (row) {
+                const firstCell = row.querySelector('td');
+                if (firstCell && firstCell.innerText.trim()) {
+                    formatName = firstCell.innerText.trim();
+                }
+            }
+            let fmt = formats.find(f => f.id === formatId);
+            if (!fmt) {
+                fmt = { id: formatId, name: formatName, csv: null, xlsx: null };
+                formats.push(fmt);
+            }
+            if (type === 'CSV') fmt.csv = new URL(href, window.location.origin).href;
+            if (type === 'XLSX') fmt.xlsx = new URL(href, window.location.origin).href;
+        });
+        return formats;
+    }
+
+    // Descarga un formato personalizado y lo guarda con el nombre "Resultados_..."
+    async function downloadCustomExport(format, preferType) {
+        const url = (preferType === 'CSV' ? (format.csv || format.xlsx) : (format.xlsx || format.csv));
+        if (!url) throw new Error('Este formato no tiene enlace de descarga disponible.');
+        const ext = url.toUpperCase().includes('/XLSX/') ? 'xlsx' : 'csv';
+
+        const res = await customRequest({ method: 'GET', url: url, responseType: 'blob' }, 90000);
+        if (res.status !== 200 || !(res.response instanceof Blob) || res.response.size === 0) {
+            throw new Error(`El servidor no devolvió un archivo válido (HTTP ${res.status}).`);
+        }
+
+        // Nombre que propone el servidor
+        let serverFilename = '';
+        const cd = (res.headers || '').match(/content-disposition:[^\n]*filename\*?=(?:UTF-8'')?"?([^";\n]+)/i);
+        if (cd) {
+            try { serverFilename = decodeURIComponent(cd[1].trim()); } catch (e) { serverFilename = cd[1].trim(); }
+        }
+        const filename = buildResultsFilename(serverFilename, document.title, ext);
+        downloadBlob(res.response, filename);
+        return filename;
+    }
+
+    // Modal simple para elegir formato/tipo cuando hay más de uno
+    function showExportFormatChooser(formats) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:420px; max-width:92vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+            modal.innerHTML = `
+                <h4 style="margin:0 0 4px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-floppy-o"></i> Descarga personalizada de resultados</h4>
+                <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se encontraron ${formats.length} descargas personalizadas. Elige cuál exportar:</p>
+                <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+                    <select id="zg-export-format-select" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #cbd5e1; border-radius:8px; background:#fff;">
+                        ${formats.map((f, i) => `<option value="${i}">${f.name}</option>`).join('')}
+                    </select>
+                    <div style="display:flex; gap:14px; align-items:center; font-size:12px; color:#334155;">
+                        <span style="font-weight:600;">Tipo:</span>
+                        <label style="margin:0; font-weight:500;"><input type="radio" name="zg-export-type" value="XLSX" checked> Excel (XLSX)</label>
+                        <label style="margin:0; font-weight:500;"><input type="radio" name="zg-export-type" value="CSV"> CSV</label>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <button id="zg-export-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                    <button id="zg-export-accept" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-download"></i> Descargar</button>
+                </div>
+            `;
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            const cleanup = (val) => { overlay.remove(); resolve(val); };
+            modal.querySelector('#zg-export-cancel').addEventListener('click', () => cleanup(null));
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+            modal.querySelector('#zg-export-accept').addEventListener('click', () => {
+                const idx = parseInt(modal.querySelector('#zg-export-format-select').value, 10);
+                const type = modal.querySelector('input[name="zg-export-type"]:checked')?.value || 'XLSX';
+                cleanup({ format: formats[idx], type });
+            });
+        });
+    }
+
+    // Descarga resultados para un quiz dado su URL base "/quiz/<id>/all/"
+    // skipChooser: si es true, siempre usa el primer formato sin mostrar el selector
+    async function handleResultsDownloadClick(btn, quizAllBaseUrl = null, skipChooser = false) {
+        if (!quizAllBaseUrl) {
+            const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)\/all\//);
+            if (!quizIdMatch) return;
+            quizAllBaseUrl = `/quiz/${quizIdMatch[1]}/all/`;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Resultados';
+
+        try {
+            console.log('🔍 [ZipGrade] Buscando descargas personalizadas del quiz...');
+            const formats = await fetchCustomExportFormats(quizAllBaseUrl);
+
+            if (formats.length === 0) {
+                alert('Este quiz no tiene descargas personalizadas (Export Formats) creadas.\nCrea una desde "Custom Export Wizard..." primero.');
+                return;
+            }
+
+            let chosen;
+            if (formats.length === 1 || skipChooser) {
+                // Solo existe una descarga personalizada (o modo masivo): se escoge por defecto
+                chosen = { format: formats[0], type: formats[0].xlsx ? 'XLSX' : 'CSV' };
+                console.log(`✅ [ZipGrade] Descarga personalizada seleccionada: "${formats[0].name}" (${chosen.type})`);
+            } else {
+                chosen = await showExportFormatChooser(formats);
+                if (!chosen) return; // cancelado
+            }
+
+            console.log(`⬇️ [ZipGrade] Descargando resultados con formato "${chosen.format.name}" (${chosen.type})...`);
+            const filename = await downloadCustomExport(chosen.format, chosen.type);
+            console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
+        } catch (err) {
+            console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
+            alert(`No se pudo descargar los resultados: ${err.message}`);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    // Formatea la fila "Date:" de la tabla de detalles del quiz a "Miércoles 16/SEP/2026"
+    function formatQuizDetailDate() {
+        const tds = Array.from(document.querySelectorAll('td'));
+        for (let i = 0; i < tds.length; i++) {
+            if (tds[i].innerText.trim() === 'Date:') {
+                const valTd = tds[i].nextElementSibling;
+                if (!valTd || valTd.dataset.zgDateFormatted) return;
+                const englishDate = valTd.innerText.trim();
+                const isoDate = parseEnglishDate(englishDate);
+                if (isoDate) {
+                    valTd.dataset.originalDate = isoDate;
+                    valTd.innerText = formatQuizDate(isoDate);
+                    valTd.dataset.zgDateFormatted = 'true';
+                    console.log(`✅ [ZipGrade] Fecha del quiz formateada: ${englishDate} -> ${valTd.innerText}`);
+                }
+                return;
+            }
+        }
+    }
+
     function initQuizDetailPage() {
+        // Formatear fecha del detalle del quiz (September 16, 2026 -> Miércoles 16/SEP/2026)
+        formatQuizDetailDate();
+
+        // Pre-formatear el campo del nombre del nuevo quiz en el modal de copia
+        const newQuizNameInput = document.getElementById('newQuizName');
+        if (newQuizNameInput) {
+            newQuizNameInput.value = adjustQuizNameFormat(newQuizNameInput.value);
+        }
+
         // 1. Interceptar click en submit del modal "Copy Quiz" para almacenar la fecha origen
         const copyForm = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
         if (copyForm) {
@@ -1020,7 +1690,7 @@
                             <input type="checkbox" id="zg-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
                             <span style="font-weight:700; font-size:12px; color:#ffffff;">Descarga Rápida</span>
                         </div>
-                        <span id="zg-counter-badge" style="font-size:10px; padding:2px 8px; border-radius:10px; background:rgba(255,255,255,0.25); color:#ffffff; font-weight:600;">
+                        <span id="zg-counter-badge" class="zg-counter-badge">
                             0 marcados
                         </span>
                     </div>
@@ -1484,16 +2154,16 @@
                 if (successCount > 0 && successCount % 5 === 0 && consecutiveErrors === 0) {
                     const coolingTime = 20000;
                     totalCoolingTime += coolingTime;
-                    console.log(`⏳ Enfriando ${coolingTime/1000}s tras ${successCount} descargas (límite ZipGrade)...`);
-                    updateStatusText(`⏳ Pausa de ${coolingTime/1000}s para evitar bloqueo del servidor...`);
+                    console.log(`⏳ Enfriando ${coolingTime / 1000}s tras ${successCount} descargas (límite ZipGrade)...`);
+                    updateStatusText(`⏳ Pausa de ${coolingTime / 1000}s para evitar bloqueo del servidor...`);
                     await new Promise(r => setTimeout(r, coolingTime));
                 }
 
                 if (consecutiveErrors > 0) {
                     pause = Math.min(10000, pause + (consecutiveErrors * 3000));
-                    console.warn(`⏱️ ${consecutiveErrors} error(es) — pausa extendida a ${pause/1000}s`);
+                    console.warn(`⏱️ ${consecutiveErrors} error(es) — pausa extendida a ${pause / 1000}s`);
                 }
-                console.log(`⏱️ Pausa de ${pause/1000}s...`);
+                console.log(`⏱️ Pausa de ${pause / 1000}s...`);
                 await new Promise(r => setTimeout(r, pause));
             }
         }
@@ -1773,7 +2443,7 @@
         } catch (err) {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
-                console.warn(`⚠️ fetch timeout (${timeoutMs/1000}s) para ${className}`);
+                console.warn(`⚠️ fetch timeout (${timeoutMs / 1000}s) para ${className}`);
                 return 'RETRY_GM';
             }
             console.warn(`⚠️ fetch error para ${className}: ${err.message}`);

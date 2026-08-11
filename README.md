@@ -32,6 +32,18 @@ Haz clic en el siguiente botón para instalar directamente en Tampermonkey con u
 5. **💾 Persistencia y Exportación/Importación JSON**:
    - Guarda tus asignaciones de plantillas en `localStorage` e intercambia configuraciones vía archivos `.json`.
 
+6. **📥 Descarga Personalizada de Resultados**:
+   - Detecta automáticamente los *Export Formats* personalizados del quiz: si solo existe uno, lo usa por defecto; si hay varios, muestra un selector con opción Excel/CSV.
+   - El archivo se guarda renombrado como `Resultados_<nombre del quiz hasta la sesión>` (ej: `Resultados_Template E.S.A. _ 10_ - 11_ _ P3 _ S2.xlsx`).
+
+7. **📋 Columna "Resultados" en `/quizzes/` (individual y masiva)**:
+   - Nueva columna al final de la tabla con **checkbox + botón de descarga individual** por quiz.
+   - Botón **"Descargar Resultados"** arriba (junto a Delete/Archive) que descarga en lote todos los quizzes marcados, con pausas anti rate-limit.
+   - Cada archivo se renombra automáticamente como `Resultados_<nombre hasta sesión>`.
+
+8. **📅 Formato de fecha en detalle del quiz**:
+   - En `/quiz/.../all/`, la fecha `September 16, 2026` se muestra como `Miércoles 16/SEP/2026`.
+
 ---
 
 ## 🛠️ Instalación Manual
