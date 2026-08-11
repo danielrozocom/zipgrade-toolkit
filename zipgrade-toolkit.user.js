@@ -55,6 +55,45 @@
                 background: #2563eb;
                 color: #ffffff;
             }
+            #quizTable thead th,
+            #quizTable thead td,
+            #subjectTable thead th,
+            #subjectTable thead td {
+                text-align: center !important;
+                vertical-align: middle !important;
+            }
+            #quizTable thead th h4,
+            #quizTable thead td h4,
+            #subjectTable thead th h4,
+            #subjectTable thead td h4 {
+                text-align: center !important;
+            }
+            #quizTable thead th.sorting,
+            #quizTable thead th.sorting_asc,
+            #quizTable thead th.sorting_desc,
+            #quizTable thead th.sorting_asc_disabled,
+            #quizTable thead th.sorting_desc_disabled {
+                padding-right: 0 !important;
+            }
+            #quizTable thead th.sorting::after,
+            #quizTable thead th.sorting_asc::after,
+            #quizTable thead th.sorting_desc::after,
+            #quizTable thead th.sorting_asc_disabled::after,
+            #quizTable thead th.sorting_desc_disabled::after,
+            #quizTable thead th.sorting::before,
+            #quizTable thead th.sorting_asc::before,
+            #quizTable thead th.sorting_desc::before,
+            #quizTable thead th.sorting_asc_disabled::before,
+            #quizTable thead th.sorting_desc_disabled::before {
+                display: none !important;
+            }
+            #quizTable tbody th,
+            #quizTable tbody td,
+            #subjectTable tbody th,
+            #subjectTable tbody td {
+                text-align: center !important;
+                vertical-align: middle !important;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -65,6 +104,143 @@
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
     let hasSortedQuizzesInitially = false;
+
+    // TTL de caché para no refetchear en cada recarga de /quizzes/
+    const ZG_STATUS_CACHE_TTL_MS = 5 * 60 * 1000;       // escaneados por quiz (páginas /all/ pesadas)
+    const ZG_CLASSMAP_CACHE_TTL_MS = 10 * 60 * 1000;    // mapa clase -> nº de estudiantes
+    const ZG_FORMATS_CACHE_TTL_MS = 60 * 60 * 1000;     // formatos de exportación por quiz (Descarga Rápida)
+
+    function zgCacheGet(key, ttlMs) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            const obj = JSON.parse(raw);
+            if (obj && obj.ts && (Date.now() - obj.ts) < ttlMs) return obj.v;
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function zgCacheSet(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify({ ts: Date.now(), v: value }));
+        } catch (e) {
+            /* ignore */
+        }
+    }
+
+    // Caché en memoria del HTML de páginas pesadas (/all/ y /edit/): la columna Estado
+    // ya descarga cada /all/ en segundo plano; al abrir los modales de copiar/editar se
+    // reutiliza ese HTML en vez de descargarlo de nuevo (abre el modal al instante).
+    // TTL amplio: reabrir un modal dentro de la misma sesión no vuelve a pedir la página.
+    const ZG_RAW_PAGE_TTL_MS = 30 * 60 * 1000;
+    const ZG_RAW_PAGE_MAX = 200;
+    const zgRawPageCache = new Map();
+
+    function zgRawPageGet(url) {
+        const e = zgRawPageCache.get(url);
+        if (e && (Date.now() - e.ts) < ZG_RAW_PAGE_TTL_MS) return e.html;
+        return null;
+    }
+
+    function zgRawPageSet(url, html) {
+        if (!url || html == null) return;
+        zgRawPageCache.set(url, { html, ts: Date.now() });
+        if (zgRawPageCache.size > ZG_RAW_PAGE_MAX) {
+            const oldest = zgRawPageCache.keys().next().value;
+            if (oldest) zgRawPageCache.delete(oldest);
+        }
+    }
+
+    // Caché GLOBAL de la lista de clases (roster): es la misma para todos los quizzes y
+    // rara vez cambia, así que se guarda 24 h en localStorage y los modales no la vuelven
+    // a pedir (evita descargar la página /edit/ pesada por cada modal abierto).
+    const ZG_CLASSES_CACHE_KEY = 'zg_classes_cache';
+    const ZG_CLASSES_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+    function zgClassesGet() {
+        try {
+            const raw = localStorage.getItem(ZG_CLASSES_CACHE_KEY);
+            if (!raw) return null;
+            const o = JSON.parse(raw);
+            if (o && o.ts && (Date.now() - o.ts) < ZG_CLASSES_CACHE_TTL_MS) return o.v;
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function zgClassesSet(items) {
+        if (!Array.isArray(items) || items.length === 0) return;
+        try {
+            localStorage.setItem(ZG_CLASSES_CACHE_KEY, JSON.stringify({ ts: Date.now(), v: items }));
+        } catch (e) { /* ignore */ }
+    }
+
+    // Extrae la lista de clases de una página /edit/ (li > input[name="classList"] + label)
+    function extractClassListFromEditDoc(doc) {
+        const items = [];
+        const classUl = doc.getElementById('classList');
+        if (classUl) {
+            classUl.querySelectorAll('li').forEach(li => {
+                const input = li.querySelector('input[name="classList"]');
+                const label = li.querySelector('label');
+                if (input) {
+                    items.push({
+                        value: input.value,
+                        checked: input.checked,
+                        text: label ? label.innerText.trim() : input.value
+                    });
+                }
+            });
+        }
+        return items;
+    }
+
+    let zgClassesFetchPromise = null;
+
+    // Devuelve el roster de clases [{value, text}] para los modales.
+    // Usa la caché global (24 h); si no existe, descarga la página /edit/ de UN quiz
+    // (una sola vez, para todos) y guarda la caché. Si ya hay una descarga en curso,
+    // se reutiliza la misma promesa (evita pedir /edit/ dos veces en paralelo).
+    async function getQuizClassItems(quizAllBaseUrl) {
+        const cached = zgClassesGet();
+        if (cached) return cached;
+        if (zgClassesFetchPromise) return zgClassesFetchPromise;
+
+        zgClassesFetchPromise = fetchQuizClassRoster(quizAllBaseUrl);
+        try {
+            return await zgClassesFetchPromise;
+        } finally {
+            zgClassesFetchPromise = null;
+        }
+    }
+
+    async function fetchQuizClassRoster(quizAllBaseUrl) {
+        const quizIdMatch = quizAllBaseUrl.match(/\/quiz\/([^/]+)\//);
+        if (!quizIdMatch) return [];
+        const editUrl = `/quiz/${quizIdMatch[1]}/edit/`;
+
+        let html = zgRawPageGet(editUrl);
+        if (html === null) {
+            const res = await customRequest({ method: 'GET', url: editUrl }, 45000);
+            if (res.status !== 200) throw new Error('HTTP ' + res.status);
+            html = res.responseText || '';
+            zgRawPageSet(editUrl, html);
+        }
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const items = extractClassListFromEditDoc(doc).map(item => ({ value: item.value, text: item.text }));
+        zgClassesSet(items);
+        return items;
+    }
+
+    // Precarga la lista de clases en segundo plano (si aún no está cacheada) para que
+    // el primer modal de copiar/editar no espere a descargar la página /edit/.
+    function warmQuizClassListCache(quizAllBaseUrl) {
+        if (zgClassesGet()) return;
+        getQuizClassItems(quizAllBaseUrl).catch(() => { /* silencioso: se reintenta al abrir un modal */ });
+    }
 
     // ==========================================
     // 2. PONDERACIÓN ACADÉMICA Y ORDENACIÓN POR GRADOS
@@ -501,12 +677,25 @@
         return `${dayName} ${day}/${monthName}/${year}`;
     }
 
+    // Peso de ordenación de la celda "Class" de un quiz.
+    // Las clases individuales (1°, 2°, 6-1, ...) van primero por su peso de grado.
+    // Los grupos/rangos (1° - 2°, 3° - 5°, ...) van SIEMPRE DESPUÉS de todas las
+    // clases normales, ordenados por su grado inicial.
+    function getQuizClassWeightFromText(text) {
+        if (!text || text === '-') return 99999;
+        const clean = text.trim();
+        const grades = parseQuizClassGrades(clean);
+        if (grades.length > 1) {
+            return 50000 + grades[0] * 100;
+        }
+        const w = extractGradeWeight(clean);
+        return w < 99999 ? w : 99999;
+    }
+
     function getQuizClassWeight(row) {
         const cell = row.cells[2];
         if (!cell) return 99999;
-        const text = cell.innerText.trim();
-        if (!text || text === '-') return 99999;
-        return extractGradeWeight(text);
+        return getQuizClassWeightFromText(cell.innerText.trim());
     }
 
     function getQuizDateValue(row) {
@@ -518,6 +707,75 @@
             return parseInt(match[1] + match[2] + match[3], 10);
         }
         return 0;
+    }
+
+    // Traduce las cabeceras de la tabla de quizzes a español (idempotente).
+    // Solo cambia los nodos de texto para conservar la tipografía y estructura
+    // original del <th> (spans, clases de ordenación de DataTables, etc.).
+    function setHeaderTextPreservingStyle(th, newText) {
+        const textNodes = [];
+        const walker = document.createTreeWalker(th, NodeFilter.SHOW_TEXT, {
+            acceptNode(node) {
+                const t = (node.textContent || '').trim();
+                return t ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+        });
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+        if (textNodes.length === 0) {
+            th.textContent = newText;
+            return;
+        }
+        textNodes[0].textContent = newText;
+        for (let i = 1; i < textNodes.length; i++) {
+            textNodes[i].parentNode.removeChild(textNodes[i]);
+        }
+    }
+
+    // Fuerza el centrado de TODOS los encabezados de #quizTable directamente
+    // como estilo inline, para evitar que DataTables los sobreescriba.
+    function centerQuizTableHeaders() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+        const theadRow = table.querySelector('thead tr');
+        if (!theadRow) return;
+        Array.from(theadRow.querySelectorAll('th, td')).forEach(h => {
+            h.style.textAlign = 'center';
+            h.style.verticalAlign = 'middle';
+            h.style.paddingRight = '0px';
+            h.querySelectorAll('h1, h2, h3, h4, h5, h6, span, div, p, a').forEach(child => {
+                child.style.textAlign = 'center';
+            });
+        });
+    }
+
+    function translateQuizHeaders() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+        const theadRow = table.querySelector('thead tr');
+        if (!theadRow) return;
+
+        const headerMap = {
+            'quiz name': 'Nombre',
+            'quizzes': 'Evaluaciones',
+            'name': 'Nombre',
+            'class': 'Clase',
+            'questions': 'Preguntas',
+            'date': 'Fecha',
+            'folder': 'Carpeta'
+        };
+
+        Array.from(theadRow.querySelectorAll('th, td')).forEach(h => {
+            const orig = h.dataset.zgOrigHeader;
+            const text = (orig || h.innerText).trim();
+            if (!text) return;
+            if (!orig) h.dataset.zgOrigHeader = text;
+            const key = text.toLowerCase();
+            const target = headerMap[key];
+            if (target && h.innerText.trim() !== target) setHeaderTextPreservingStyle(h, target);
+        });
+
+        // Forzar centrado inline en todos los encabezados después de traducir
+        centerQuizTableHeaders();
     }
 
     function createQuizzesSortControls() {
@@ -843,10 +1101,17 @@
 
     async function getClassStudentCountMap() {
         if (zgClassStudentCountCache) return zgClassStudentCountCache;
+        const cached = zgCacheGet('zg_class_map', ZG_CLASSMAP_CACHE_TTL_MS);
+        if (cached) {
+            zgClassStudentCountCache = cached;
+            return cached;
+        }
         const map = {};
+        let ok = false;
         try {
             const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
             if (res.status === 200) {
+                ok = true;
                 const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
                 const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
                 rows.forEach(row => {
@@ -862,22 +1127,32 @@
         } catch (e) {
             console.warn('⚠️ [ZipGrade] No se pudo obtener el mapa de estudiantes por clase:', e);
         }
-        zgClassStudentCountCache = map;
+        if (ok) {
+            zgClassStudentCountCache = map;
+            zgCacheSet('zg_class_map', map);
+        }
         return map;
     }
 
     function getQuizRowClassText(row) {
         // En DataTables de quizTable:
-        // Columna 0: Checkbox
+        // Columna 0: Checkbox (celda <td>, NO <th>)
         // Columna 1: Folder
         // Columna 2: Class
-        // Buscar el TH "Class" para obtener el índice exacto de columna por si cambia
+        // Buscar la celda de cabecera "Class"/"Clase" incluyendo <td> y <th> para que el
+        // índice coincida con row.cells (que incluye la celda del checkbox).
         const table = row.closest('table');
         if (table) {
-            const ths = Array.from(table.querySelectorAll('thead th'));
-            const classIdx = ths.findIndex(th => th.innerText.toLowerCase().includes('class'));
-            if (classIdx !== -1 && row.cells[classIdx]) {
-                return row.cells[classIdx].innerText.trim();
+            const theadRow = table.querySelector('thead tr');
+            if (theadRow) {
+                const headers = Array.from(theadRow.querySelectorAll('th, td'));
+                const classIdx = headers.findIndex(h => {
+                    const txt = h.innerText.toLowerCase();
+                    return txt.includes('class') || txt.includes('clase');
+                });
+                if (classIdx !== -1 && row.cells[classIdx]) {
+                    return row.cells[classIdx].innerText.trim();
+                }
             }
         }
         const cell = row.cells[2];
@@ -885,28 +1160,89 @@
         return cell.innerText.trim();
     }
 
-    // Obtiene papers escaneados de la página /all/ del quiz
-    async function fetchQuizStatus(quizAllBaseUrl) {
+    // Obtiene papers escaneados de la página /all/ del quiz (con caché para no refetchear).
+    // bypassCache: recarga forzada (botón de refresco) ignorando la caché de estado.
+    async function fetchQuizStatus(quizAllBaseUrl, bypassCache) {
+        const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
+        const cacheKey = quizId ? 'zg_status_' + quizId : null;
+        if (cacheKey && !bypassCache) {
+            const cached = zgCacheGet(cacheKey, ZG_STATUS_CACHE_TTL_MS);
+            if (cached !== null && cached !== undefined) return cached;
+        }
         try {
             const res = await customRequest({ method: 'GET', url: quizAllBaseUrl }, 30000);
             if (res.status !== 200) return null;
             const html = res.responseText || '';
-
-            // Papers escaneados: fila "Number of Papers:" (regex directa sobre el HTML)
-            let scanned = null;
-            const papersM = html.replace(/\s+/g, ' ').match(/Number of Papers:?<\/b><\/td>\s*<td[^>]*>\s*(\d+)/i);
-            if (papersM) scanned = parseInt(papersM[1], 10);
-
-            // Respaldo de escaneados: filas de la tabla gradedPapers
-            if (scanned === null || isNaN(scanned)) {
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                const gpRows = doc.querySelectorAll('#gradedPapers tbody tr');
-                scanned = gpRows ? gpRows.length : 0;
-            }
-            return { scanned };
+            zgRawPageSet(quizAllBaseUrl, html);
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const scanned = parseScannedCount(doc, quizId);
+            const result = { scanned };
+            if (cacheKey) zgCacheSet(cacheKey, result);
+            return result;
         } catch (e) {
             return null;
         }
+    }
+
+    // Cuenta los papers escaneados en el HTML de la página /all/ del quiz.
+    // Prioridad: fila "Number of Papers:" del resumen -> etiqueta dentro de un contenedor
+    // -> DataTables info de #gradedPapers -> conteo de filas reales.
+    // Se usa DOM (no regex sobre todo el HTML) para NO capturar el conteo de otras tablas
+    // de la misma página (eso daba "1/17" cuando el quiz real tenía "0/17").
+    function parseScannedCount(doc, quizId) {
+        const labelRe = /^number\s+of\s+papers:?\s*$/i;
+
+        // 1) Resumen del quiz: celda etiqueta "Number of Papers:" + celda valor siguiente
+        const cells = Array.from(doc.querySelectorAll('td'));
+        for (const td of cells) {
+            if (!labelRe.test((td.textContent || '').trim())) continue;
+            const next = td.nextElementSibling;
+            if (!next) continue;
+            const m = (next.textContent || '').match(/\d+/);
+            if (m) {
+                const val = parseInt(m[0], 10);
+                console.debug('🔍 [ZipGrade] Estado ' + quizId + ' desde fila "Number of Papers": ' + val);
+                return val;
+            }
+        }
+
+        // 2) Respaldo: etiqueta y número en el mismo contenedor (si el HTML no usa fila + celda)
+        const anyEls = Array.from(doc.querySelectorAll('td, th, div, p, span, h4, h5'));
+        for (const el of anyEls) {
+            if (!labelRe.test((el.textContent || '').trim())) continue;
+            const parent = el.parentElement;
+            if (!parent) continue;
+            const m = (parent.textContent || '').match(/number\s+of\s+papers:?\s*([\d,]+)/i);
+            if (m) {
+                const val = parseInt(m[1].replace(/,/g, ''), 10);
+                console.debug('🔍 [ZipGrade] Estado ' + quizId + ' desde contenedor: ' + val);
+                return val;
+            }
+        }
+
+        // 3) DataTables info de la tabla de papers escaneados (#gradedPapers)
+        const table = doc.getElementById('gradedPapers');
+        if (table) {
+            const wrapper = table.closest('.dataTables_wrapper');
+            const info = wrapper ? wrapper.querySelector('.dataTables_info') : null;
+            if (info) {
+                const m = (info.textContent || '').match(/of\s+([\d,]+)\s+entries?/i);
+                if (m) {
+                    const val = parseInt(m[1].replace(/,/g, ''), 10);
+                    console.debug('🔍 [ZipGrade] Estado ' + quizId + ' desde dataTables_info: ' + val);
+                    return val;
+                }
+            }
+        }
+
+        // 4) Último recurso: contar filas reales de #gradedPapers (0 si no hay tabla)
+        if (table) {
+            const rows = Array.from(table.querySelectorAll('tbody tr'))
+                .filter(r => !/no data|no records|there are no/i.test(r.textContent || ''));
+            console.debug('🔍 [ZipGrade] Estado ' + quizId + ' desde filas de #gradedPapers: ' + rows.length);
+            return rows.length;
+        }
+        return 0;
     }
 
     // Obtiene el número total de estudiantes de la clase de un quiz según el mapa de /classes/
@@ -914,15 +1250,16 @@
         if (!quizClassText || !classMap) return 0;
         const quizClassNorm = normalizeClassName(quizClassText);
 
-        // 1. Coincidencia exacta de nombre en /classes/ (solo si tiene más de 0 estudiantes)
+        // 1. Coincidencia exacta de nombre en /classes/ (aunque la clase tenga 0 alumnos):
+        //    si el quiz pertenece a esa clase exacta, ese es el total (no se trata como rango).
         for (const [clsName, count] of Object.entries(classMap)) {
-            if (normalizeClassName(clsName) === quizClassNorm && count > 0) {
+            if (normalizeClassName(clsName) === quizClassNorm) {
                 return count;
             }
         }
 
-        // 2. Si es una clase rango (o una clase vacía de ordenación con 0 estudiantes),
-        // calcular el total sumando los estudiantes de las clases individuales correspondientes.
+        // 2. Solo si no hay una clase exacta con ese nombre, intentar resolver como rango
+        //    sumando los estudiantes de las clases individuales correspondientes.
         const grades = parseQuizClassGrades(quizClassText);
         const isRange = grades.length > 1;
 
@@ -1010,23 +1347,116 @@
         `;
     }
 
-    async function initQuizStatusColumn() {
+    // Limpia la caché de estado de todos los quizzes (para forzar la recarga)
+    function clearQuizStatusCache() {
+        try {
+            const toRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.indexOf('zg_status_') === 0) toRemove.push(k);
+            }
+            toRemove.forEach(k => localStorage.removeItem(k));
+        } catch (e) { /* ignore */ }
+        zgRawPageCache.clear();
+    }
+
+    // Refresca el estado (papers escaneados) de todos los quizzes de la tabla sin recargar la página.
+    // Se encola detrás de cualquier carga de Estado en curso (initQuizStatusColumn ya está en cadena).
+    async function refreshQuizStatuses() {
+        const btn = document.querySelector('.zg-status-refresh-btn');
+        if (btn && btn.dataset.zgRefreshing === '1') return;
+        if (btn) {
+            btn.dataset.zgRefreshing = '1';
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
+        }
+        try {
+            clearQuizStatusCache();
+            await initQuizStatusColumn(true);
+            showZgToast('Estados actualizados', 'success');
+        } catch (err) {
+            console.error('❌ [ZipGrade] Error al refrescar los estados:', err);
+            showZgToast('Error al refrescar los estados', 'error');
+        } finally {
+            if (btn) {
+                delete btn.dataset.zgRefreshing;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa fa-refresh"></i>';
+            }
+        }
+    }
+
+    // El botón ⟳ de "Estado" se maneja por delegación en document: funciona aunque
+    // DataTables re-construya la cabecera y el <th>/botón original se reemplace.
+    function setupQuizStatusRefreshButton() {
+        if (window._zgStatusRefreshBtn) return;
+        window._zgStatusRefreshBtn = true;
+        document.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('.zg-status-refresh-btn') : null;
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            refreshQuizStatuses();
+        });
+    }
+
+    // Refresca automáticamente los estados al volver a la pestaña (máx. 1 vez cada 60 s),
+    // para que el conteo se actualice mientras el profesor escanea papeles en otra app.
+    function setupQuizStatusAutoRefresh() {
+        if (window._zgStatusAutoRefresh) return;
+        window._zgStatusAutoRefresh = true;
+        let lastAuto = 0;
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (Date.now() - lastAuto < 60 * 1000) return;
+            lastAuto = Date.now();
+            setTimeout(() => { refreshQuizStatuses(); }, 600);
+        });
+    }
+
+    // Promesa que resuelve cuando cargan los formatos de la columna "Descarga Rápida"
+    // (peticiones ligeras); la columna Estado espera por ellas antes de descargar las
+    // páginas /all/ pesadas para que los formatos llenen TODOS los quizzes a la vez.
+    let zgFormatsLoadPromise = null;
+
+    // La columna Estado se ejecuta en CADENA: si ya hay una carga en curso (p.ej. los
+    // reintentos de 0/400/1000ms y los redibujos de DataTables), se encola en vez de
+    // lanzar OTRO bucle concurrente. Antes se disparaban 2-3 bucles a la vez y se
+    // descargaban las mismas páginas /all/ varias veces, por eso todo cargaba "uno a uno".
+    let zgStatusRunChain = Promise.resolve();
+
+    function initQuizStatusColumn(force) {
+        const run = zgStatusRunChain.then(() => initQuizStatusColumnNow(force));
+        zgStatusRunChain = run.catch(() => {});
+        return run;
+    }
+
+    async function initQuizStatusColumnNow(force) {
         const table = document.getElementById('quizTable');
         if (!table) return;
 
-        // TH "Estado" antes de "Descarga Rápida" (si existe Descarga Rápida)
+        // TH "Estado" antes de "Descarga Rápida" (si existe Descarga Rápida), con botón de refresco
         const theadRow = table.querySelector('thead tr');
         if (theadRow && !theadRow.querySelector('.zg-status-th')) {
             const th = document.createElement('th');
             th.className = 'text-center zg-status-th sorting_disabled';
-            th.style.cssText = 'vertical-align:middle; width:90px; color:#ffffff;';
-            th.innerHTML = `<span style="font-weight:700; font-size:12px; color:#ffffff;">Estado</span>`;
+            th.style.cssText = 'vertical-align:middle; text-align:center; width:90px; color:#ffffff;';
+            th.innerHTML = `
+                <div style="display:inline-flex; align-items:center; gap:6px;">
+                    <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Estado</span>
+                    <button type="button" class="zg-status-refresh-btn" title="Actualizar el estado de todos los quizzes" style="background:none; border:none; padding:0; margin:0; cursor:pointer; color:#cbd5e1; font-size:13px; line-height:1;">
+                        <i class="fa fa-refresh"></i>
+                    </button>
+                </div>
+            `;
             const resultsTh = theadRow.querySelector('.zg-quiz-th');
             if (resultsTh) {
                 theadRow.insertBefore(th, resultsTh);
             } else {
                 theadRow.appendChild(th);
             }
+            // El click del botón se maneja por DELEGACIÓN en document (setupQuizStatusRefreshButton),
+            // así sobrevive a cualquier redibujado de la cabecera por DataTables.
         }
 
         // Insertar la celda "Estado" de forma SÍNCRONA (antes de cualquier await)
@@ -1049,10 +1479,37 @@
             }
         }
 
+        // Refresco forzado: marcar todas las filas como pendientes y volver a cargar
+        if (force) {
+            rows.forEach(r => {
+                const t = r.querySelector('.zg-status-td');
+                if (t) {
+                    t.dataset.zgStatusDone = 'false';
+                    t.innerHTML = '<i class="fa fa-spinner fa-spin" style="color:#94a3b8;"></i>';
+                }
+            });
+        }
+
+        // Filas que aún necesitan cargar su Estado
+        const pending = rows.filter(r => {
+            const t = r.querySelector('.zg-status-td');
+            return t && t.dataset.zgStatusDone !== 'true';
+        });
+        if (pending.length === 0) return;
+
+        // Prioridad: esperar a que carguen los formatos de "Descarga Rápida" (ligeros)
+        // antes de ocupar la sesión con las páginas /all/ pesadas. Máx. 4 s de espera.
+        if (zgFormatsLoadPromise) {
+            await Promise.race([
+                zgFormatsLoadPromise,
+                new Promise(r => setTimeout(r, 4000))
+            ]);
+        }
+
         const classMap = await getClassStudentCountMap();
-        for (const row of rows) {
+        for (const row of pending) {
             const statusTd = row.querySelector('.zg-status-td');
-            if (!statusTd || statusTd.dataset.zgStatusDone === 'true') continue;
+            if (!statusTd) continue;
 
             const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
             if (!link) {
@@ -1068,11 +1525,967 @@
             // Total de estudiantes para la clase del quiz
             const total = getQuizClassStudentCount(classText, classMap);
 
-            const status = await fetchQuizStatus(quizAllBaseUrl);
+            const status = await fetchQuizStatus(quizAllBaseUrl, !!force);
             const scanned = status ? status.scanned : 0;
             renderQuizStatusCell(statusTd, scanned, total);
             statusTd.dataset.zgStatusDone = 'true';
         }
+    }
+
+    // ==========================================
+    // 6.2.2. COLUMNA "ACCIONES" EN /QUIZZES/ (COPIAR / EDITAR QUIZ EN MODAL)
+    // ==========================================
+    function escapeHtml(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function cloneSelectOptions(target, source) {
+        if (!source) return;
+        Array.from(source.options).forEach(opt => {
+            const o = document.createElement('option');
+            o.value = opt.value;
+            o.textContent = opt.textContent;
+            if (opt.selected) o.selected = true;
+            target.appendChild(o);
+        });
+    }
+
+    function disableQuizCustomColumnsSort() {
+        if (typeof window.jQuery === 'undefined' || !window.jQuery.fn || !window.jQuery.fn.DataTable) return;
+        const table = document.getElementById('quizTable');
+        if (!table || !window.jQuery.fn.DataTable.isDataTable(table)) return;
+        try {
+            const dt = window.jQuery(table).DataTable();
+            const settings = dt.settings()[0];
+            if (settings && settings.aoColumns) {
+                // Columnas personalizadas: Estado, Descarga Rápida, Acciones y Key
+                // La cabecera empieza con un <td> (checkbox), así que contamos TODAS las
+                // celdas (th + td) para que el índice coincida con aoColumns / row.cells.
+                const customClasses = ['zg-status-th', 'zg-quiz-th', 'zg-actions-th', 'zg-key-th'];
+                const theadRow = table.querySelector('thead tr');
+                const headers = theadRow ? Array.from(theadRow.querySelectorAll('th, td')) : [];
+                const customIdxs = [];
+                headers.forEach((h, i) => {
+                    if (customClasses.some(c => h.classList.contains(c))) customIdxs.push(i);
+                });
+                customIdxs.forEach(idx => {
+                    const col = settings.aoColumns[idx];
+                    if (col && col.bSortable !== false) {
+                        col.bSortable = false;
+                        col.bSearchable = false;
+                        col.aDataSort = [idx];
+                        col.orderData = [idx];
+                    }
+                });
+                if (settings.aaSorting && customIdxs.length) {
+                    const firstCustom = Math.min(...customIdxs);
+                    settings.aaSorting = settings.aaSorting.filter(s => s[0] < firstCustom);
+                }
+            }
+        } catch (e) {
+            console.warn("No se pudo desactivar ordenación de las columnas personalizadas:", e);
+        }
+    }
+
+    function initQuizActionsColumn() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+
+        // Cabecera "Acciones" al final de la tabla (después de "Descarga Rápida")
+        const theadRow = table.querySelector('thead tr');
+        if (theadRow && !theadRow.querySelector('.zg-actions-th')) {
+            const th = document.createElement('th');
+            th.className = 'text-center zg-actions-th sorting_disabled';
+            th.style.cssText = 'vertical-align:middle; text-align:center; width:100px; color:#ffffff;';
+            th.innerHTML = `<span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Acciones</span>`;
+            theadRow.appendChild(th);
+        }
+
+        // Celdas por fila
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        rows.forEach(row => {
+            if (row.querySelector('.zg-actions-td')) return;
+
+            const td = document.createElement('td');
+            td.className = 'zg-actions-td';
+            td.style.cssText = 'vertical-align:middle; text-align:center; white-space:nowrap;';
+
+            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+            if (!link) {
+                row.appendChild(td);
+                return;
+            }
+
+            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+            const quizIdMatch = quizAllBaseUrl.match(/\/quiz\/([^/]+)\//);
+            const quizId = quizIdMatch ? quizIdMatch[1] : '';
+            const quizName = link.innerText.trim();
+
+            td.innerHTML = `
+                <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
+                    <button class="zg-btn-quiz-copy btn btn-default btn-xs" style="padding:3px 8px;" title="Copiar quiz (modal)">
+                        <i class="fa fa-copy"></i>
+                    </button>
+                    <button class="zg-btn-quiz-edit btn btn-default btn-xs" style="padding:3px 8px;" title="Editar quiz (modal)">
+                        <i class="fa fa-pencil"></i>
+                    </button>
+                </div>
+            `;
+            row.appendChild(td);
+
+            td.querySelector('.zg-btn-quiz-copy').addEventListener('click', async (e) => {
+                e.preventDefault();
+                await showCopyQuizModal(quizAllBaseUrl, quizName);
+            });
+
+            td.querySelector('.zg-btn-quiz-edit').addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (!quizId) {
+                    alert('No se pudo identificar el quiz para editar.');
+                    return;
+                }
+                await showEditQuizModal(quizId, quizName);
+            });
+        });
+
+        disableQuizCustomColumnsSort();
+    }
+
+    function cleanFlashHtml(s) {
+        return String(s || '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/&#39;/g, "'")
+            .replace(/&quot;/gi, '"')
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/&#(\d+);/g, (m, d) => String.fromCharCode(parseInt(d, 10)))
+            .replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCharCode(parseInt(h, 16)))
+            .replace(/[ \t]+/g, ' ')
+            .replace(/\n\s*\n+/g, '\n')
+            .trim();
+    }
+
+    // Extrae el mensaje flash real de la respuesta del servidor.
+    // El primer <li> de la página suele ser el menú de usuario, así que se busca
+    // 1) el contenedor flash (div/ul con clase o id flash/message/alert/notice/error),
+    // 2) el primer <li> que contenga <b> (los flash de ZipGrade usan <b>), prefiriendo
+    //    los que mencionen import/SUCCESS/error.
+    function extractZipgradeFlash(text) {
+        if (!text) return '';
+        const container = text.match(/<(?:div|ul|section)[^>]*\b(?:class|id)\s*=\s*["'][^"']*(?:flash|message|alert|notice|error)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|ul|section)>/i);
+        if (container) {
+            const c = cleanFlashHtml(container[1]);
+            if (c) return c;
+        }
+        const lis = text.match(/<li[^>]*>([\s\S]*?)<\/li>/gi) || [];
+        let fallback = '';
+        for (const li of lis) {
+            if (!/<b>/i.test(li)) continue;
+            const t = cleanFlashHtml(li);
+            if (!t) continue;
+            if (/import|SUCCESS|error/i.test(t)) return t;
+            if (!fallback) fallback = t;
+        }
+        if (fallback) return fallback;
+        const det = text.match(/following error:?\s*([^<\r\n]{2,})/i);
+        return det ? cleanFlashHtml(det[0]) : '';
+    }
+
+    // Sube un CSV de key answers usando el endpoint oficial de importación de ZipGrade.
+    // Formato CSV (filas del key primario):
+    //   Key Version, Question Number, Response, Point Value [, Tags...]
+    //   Ej: ,1,A,1  |  ,2,C,1  |  (header opcional que empiece por "Key")
+    async function uploadAnswerKeyCsv(quizAllBaseUrl, file) {
+        const quizIdMatch = quizAllBaseUrl.match(/\/quiz\/([^/]+)\//);
+        const quizId = quizIdMatch ? quizIdMatch[1] : '';
+        if (!quizId) throw new Error('No se pudo identificar el quiz.');
+        const importUrl = `/quiz/${quizId}/edit/importExport/`;
+        const importPostUrl = `${importUrl}import/`;
+
+        const csrfResp = await fetch(importUrl, { credentials: 'same-origin' });
+        if (!csrfResp.ok) throw new Error('No se pudo cargar la página de importación (HTTP ' + csrfResp.status + ').');
+        const html = await csrfResp.text();
+        const tokenTag = html.match(/<input[^>]*\bname=["']csrf_token["'][^>]*>/i);
+        const csrf = tokenTag ? ((tokenTag[0].match(/value=["']([^"']*)["']/) || [])[1] || '') : '';
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('submit', '');
+        if (csrf) fd.append('csrf_token', csrf);
+
+        const resp = await fetch(importPostUrl, { method: 'POST', credentials: 'same-origin', body: fd });
+        if (!resp.ok) throw new Error('El servidor respondió HTTP ' + resp.status + '.');
+        const text = await resp.text();
+
+        let msg = extractZipgradeFlash(text);
+        if (msg) {
+            // El flash puede traer solo el texto genérico ("... due to following error")
+            // mientras el detalle real aparece después de los dos puntos en la respuesta.
+            if (/^Unable to import CSV file due to following error:?\s*$/i.test(msg)) {
+                const detailMatch = text.match(/following error:?\s*([^<\r\n]{2,})/i);
+                const detail = detailMatch ? cleanFlashHtml(detailMatch[1]) : '';
+                if (detail && !/^Unable to import/i.test(detail)) {
+                    msg = 'Unable to import CSV file due to following error: ' + detail;
+                }
+            }
+            return { ok: /SUCCESS/i.test(msg), message: msg };
+        }
+        return { ok: false, message: 'No se pudo confirmar el resultado de la importación.' };
+    }
+
+    function showZgToast(message, type) {
+        const existing = document.getElementById('zg-toast');
+        if (existing) existing.remove();
+        const toast = document.createElement('div');
+        toast.id = 'zg-toast';
+        const bg = type === 'success' ? '#16a34a' : type === 'error' ? '#dc2626' : '#2563eb';
+        toast.style.cssText = `position:fixed;top:70px;right:20px;z-index:99999;max-width:400px;min-width:200px;padding:12px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);font:13px/1.5 'Open Sans',sans-serif;color:#fff;background:${bg};white-space:pre-wrap;word-break:break-word;cursor:pointer;`;
+        toast.textContent = message;
+        toast.addEventListener('click', () => toast.remove());
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.transition = 'opacity .4s';
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 400);
+        }, 8000);
+    }
+
+    function cleanKeyFlashMsg(msg) {
+        const clean = String(msg == null ? '' : msg).replace(/^(SUCCESS|ERROR|Error|FAILED|FAILURE)\s*:?\s*/i, '').trim();
+        const known = {
+            'All data from file imported as answer keys for this quiz': 'Claves importadas correctamente'
+        };
+        return known[clean] || clean;
+    }
+
+    // Extrae el JSON `var cQuiz = [...]` incrustado en el script del editor de key,
+    // haciendo match balanceado de corchetes. Devuelve el texto JSON o null.
+    function extractCQuiz(script) {
+        const idx = script.indexOf('var cQuiz =');
+        if (idx === -1) return null;
+        let i = script.indexOf('[', idx);
+        if (i === -1) return null;
+        let depth = 0;
+        let j = i;
+        for (; j < script.length; j++) {
+            if (script[j] === '[') depth++;
+            else if (script[j] === ']') {
+                depth--;
+                if (depth === 0) break;
+            }
+        }
+        if (depth !== 0) return null;
+        return script.slice(i, j + 1);
+    }
+
+    // Detecta si la página del editor de key tiene respuestas cargadas,
+    // parseando el JSON `cQuiz` (fuente de verdad del servidor).
+    // Devuelve: true = key presente, false = sin key, null = no se pudo determinar.
+    function detectQuizKeyInDoc(doc) {
+        if (!doc || !doc.body) return null;
+        const cQuizJson = Array.from(doc.querySelectorAll('script'))
+            .map(s => s.textContent || '')
+            .map(extractCQuiz)
+            .find(t => t != null);
+        if (!cQuizJson) return null;
+        try {
+            const keys = JSON.parse(cQuizJson);
+            if (!Array.isArray(keys)) return null;
+            return keys.some(k =>
+                Array.isArray(k.keyQuestions) &&
+                k.keyQuestions.some(q =>
+                    q && Array.isArray(q.answers) &&
+                    q.answers.some(a => a && typeof a.ans === 'string' && a.ans.trim() !== '')
+                )
+            );
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Consulta el editor de key de un quiz para saber si tiene respuestas cargadas.
+    async function fetchQuizKeyStatus(quizId, diagnose) {
+        try {
+            const resp = await fetch(`/quiz/${quizId}/edit/key/0/?subjectGuid=all`, { credentials: 'same-origin' });
+            if (!resp.ok) {
+                if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ': HTTP ' + resp.status);
+                return null;
+            }
+            const html = await resp.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            if (diagnose) {
+                const cQuizJson = Array.from(doc.querySelectorAll('script'))
+                    .map(s => s.textContent || '')
+                    .map(extractCQuiz)
+                    .find(t => t != null);
+                let summary = 'cQuiz no encontrado';
+                if (cQuizJson) {
+                    try {
+                        const keys = JSON.parse(cQuizJson);
+                        const answered = keys.filter(k => (k.keyQuestions || []).some(q => (q.answers || []).some(a => a && (a.ans || '').trim() !== ''))).length;
+                        summary = 'keys=' + keys.length + ', keysConRespuestas=' + answered +
+                            ', preguntasConRespuesta=' + keys.reduce((n, k) => n + (k.keyQuestions || []).filter(q => (q.answers || []).some(a => a && (a.ans || '').trim() !== '')).length, 0);
+                    } catch (pe) {
+                        summary = 'cQuiz JSON parse error';
+                    }
+                }
+                console.info('🔍 [ZipGrade] DIAG cQuiz ' + quizId + ': ' + summary);
+            }
+            return detectQuizKeyInDoc(doc);
+        } catch (e) {
+            if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ' error:', e);
+            console.warn('⚠️ [ZipGrade] No se pudo verificar la key del quiz ' + quizId + ':', e);
+            return null;
+        }
+    }
+
+    // Renderiza el badge de estado de la key en la celda.
+    function renderKeyStatus(el, state) {
+        if (state === true) {
+            el.textContent = '✔ Key';
+            el.style.color = '#10b981';
+            el.title = 'Key cargada';
+        } else if (state === false) {
+            el.textContent = '✘ Sin key';
+            el.style.color = '#ef4444';
+            el.title = 'No hay key cargada';
+        } else {
+            el.textContent = '?';
+            el.style.color = '#94a3b8';
+            el.title = 'No se pudo verificar la key';
+        }
+    }
+
+    // Columna "Key" en /quizzes/: subir las key answers (respuestas correctas) en CSV por quiz
+    function initQuizKeyColumn() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+        const jobs = [];
+
+        const theadRow = table.querySelector('thead tr');
+        if (theadRow && !theadRow.querySelector('.zg-key-th')) {
+            const th = document.createElement('th');
+            th.className = 'text-center zg-key-th sorting_disabled';
+            th.style.cssText = 'vertical-align:middle; text-align:center; width:90px; color:#ffffff;';
+            th.innerHTML = `<span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Key</span>`;
+            theadRow.appendChild(th);
+        }
+
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        rows.forEach(row => {
+            if (row.querySelector('.zg-key-td')) return;
+
+            const td = document.createElement('td');
+            td.className = 'zg-key-td';
+            td.style.cssText = 'vertical-align:middle; text-align:center; white-space:nowrap;';
+
+            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+            if (!link) {
+                row.appendChild(td);
+                return;
+            }
+            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+
+            const quizIdMatch = quizAllBaseUrl.match(/\/quiz\/([^/]+)\//);
+            const quizId = quizIdMatch ? quizIdMatch[1] : '';
+
+            td.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+                    <button class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV)">
+                        <i class="fa fa-upload"></i> Key
+                    </button>
+                    <input type="file" class="zg-key-file" accept=".csv,text/csv" style="display:none;" />
+                    <a class="zg-key-view" href="${quizId ? `/quiz/${quizId}/edit/key/0/?subjectGuid=all` : '#'}" target="_blank" rel="noopener" title="Ver key answers (nueva pestaña)" style="font-size:10px; color:#2563eb; text-decoration:underline; cursor:pointer; line-height:1.2;">Ver key ↪</a>
+                    <span class="zg-key-status" style="font-size:10px; color:#64748b; line-height:1.2; max-width:130px; word-break:break-word; overflow-wrap:anywhere; text-align:center;"></span>
+                </div>
+            `;
+            row.appendChild(td);
+
+            const btn = td.querySelector('.zg-btn-quiz-key');
+            const fileInput = td.querySelector('.zg-key-file');
+            const statusEl = td.querySelector('.zg-key-status');
+            statusEl.textContent = '↻';
+            statusEl.title = 'Verificando key...';
+
+            if (quizId) jobs.push({ statusEl, quizId });
+
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                fileInput.value = '';
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', async () => {
+                const file = fileInput.files && fileInput.files[0];
+                if (!file) return;
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                statusEl.textContent = 'Subiendo...';
+                statusEl.style.color = '#2563eb';
+                try {
+                    const result = await uploadAnswerKeyCsv(quizAllBaseUrl, file);
+                    if (result.ok) {
+                        renderKeyStatus(statusEl, true);
+                        showZgToast('✔ Claves importadas correctamente.', 'success');
+                    } else {
+                        const errMsg = cleanKeyFlashMsg(result.message);
+                        statusEl.title = errMsg;
+                        showZgToast('✘ ' + errMsg, 'error');
+                    }
+                } catch (err) {
+                    const errMsg = err.message || 'Error desconocido';
+                    statusEl.title = errMsg;
+                    showZgToast('✘ ' + errMsg, 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    fileInput.value = '';
+                }
+            });
+        });
+
+        // Verificar el estado de la key de cada quiz con un pool de peticiones limitado
+        let jobIndex = 0;
+        let zgKeyDiagnosed = false;
+        const POOL = 4;
+        async function keyWorker() {
+            while (jobIndex < jobs.length) {
+                const job = jobs[jobIndex++];
+                const diagnose = !zgKeyDiagnosed;
+                zgKeyDiagnosed = true;
+                const state = await fetchQuizKeyStatus(job.quizId, diagnose);
+                renderKeyStatus(job.statusEl, state);
+            }
+        }
+        for (let i = 0; i < POOL && i < jobs.length; i++) keyWorker();
+
+        disableQuizCustomColumnsSort();
+    }
+
+    // Modal para copiar un quiz desde la tabla /quizzes/
+    async function showCopyQuizModal(quizAllBaseUrl, quizName) {
+        let formAction = null;
+        const formFields = {};
+        let csrfToken = '';
+        let sourceDateIso = null;
+        const classItems = [];
+        const formClassValues = [];
+
+        let suggestedName = (adjustQuizNameFormat(quizName.trim()) || quizName.trim()) + ' copy';
+        // Quitar la palabra "Template" del inicio del nombre sugerido
+        suggestedName = suggestedName.replace(/^\s*Template\s+/i, '').replace(/\s+/g, ' ').trim();
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:480px; max-width:94vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        modal.innerHTML = `
+            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-copy"></i> Copiar quiz</h4>
+            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se crearán copias de "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>" con la fecha original. Agrega una fila por cada grupo de copias; marca una o varias clases y se creará una copia por cada clase.</p>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+                <div>
+                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 6px 0;">Copias a crear:</label>
+                    <div id="zg-copy-slots" style="display:flex; flex-direction:column; gap:8px; max-height:300px; overflow-y:auto;"></div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button id="zg-copy-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-copy-accept" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-copy"></i> Copiar</button>
+            </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        const acceptBtn = modal.querySelector('#zg-copy-accept');
+        const cancelBtn = modal.querySelector('#zg-copy-cancel');
+        const slotsBox = modal.querySelector('#zg-copy-slots');
+
+        // Crea una fila de copia: nombre + clases respectivas (marca varias, se crea una copia por clase)
+        const createCopySlot = (nameValue, index, classesHtml) => {
+            const slot = document.createElement('div');
+            slot.className = 'zg-copy-slot';
+            slot.style.cssText = 'display:flex; flex-direction:column; gap:6px; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; background:#f8fafc;';
+            slot.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                    <label style="font-weight:600; font-size:11px; color:#334155; margin:0;">Copia ${index + 1}</label>
+                    <button type="button" class="zg-copy-slot-remove btn btn-default btn-xs" style="padding:1px 7px; font-size:11px; border-radius:4px;" title="Quitar esta copia">✕</button>
+                </div>
+                <input type="text" class="zg-copy-slot-name" value="${escapeHtml(nameValue)}" placeholder="Nombre de la copia" style="width:100%; box-sizing:border-box; padding:5px 8px; font-size:12px; border:1px solid #cbd5e1; border-radius:6px;" />
+                <div class="zg-copy-slot-classes-box" style="max-height:120px; overflow-y:auto; border:1px solid #cbd5e1; border-radius:6px; background:#fff; padding:6px 10px;">
+                    ${classesHtml}
+                </div>
+                <div class="zg-copy-slot-preview" style="display:none; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px; padding:8px 10px; font-size:11px; color:#3730a3; line-height:1.6;"></div>
+            `;
+            slot.querySelector('.zg-copy-slot-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') acceptBtn.click(); });
+            slot.querySelector('.zg-copy-slot-remove').addEventListener('click', () => {
+                slot.remove();
+                renumberCopySlots();
+            });
+            const classesBox = slot.querySelector('.zg-copy-slot-classes-box');
+            const nameInp = slot.querySelector('.zg-copy-slot-name');
+            const previewEl = slot.querySelector('.zg-copy-slot-preview');
+
+            // Previsualizar los títulos cuando hay varias clases marcadas:
+            // se crea una copia individual por cada clase, con su nombre de clase en el título.
+            const updateCopySlotPreview = () => {
+                const checked = Array.from(classesBox.querySelectorAll('input.zg-copy-slot-class:checked'));
+                if (checked.length <= 1) {
+                    previewEl.style.display = 'none';
+                    return;
+                }
+                const baseName = nameInp.value.trim();
+                if (!baseName) {
+                    previewEl.style.display = 'none';
+                    return;
+                }
+                const names = checked.map(cb => {
+                    const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
+                    return updateQuizNameGrade(baseName, labelText);
+                });
+                previewEl.style.display = 'block';
+                previewEl.innerHTML = `
+                    <div style="font-weight:700; margin-bottom:4px;">Se crearán ${names.length} copias individuales:</div>
+                    ${names.map(n => `<div>• <span style="font-weight:600;">${escapeHtml(n)}</span></div>`).join('')}
+                `;
+            };
+
+            // Al marcar UNA clase, poner el nombre de la clase tal cual dentro del nombre
+            // (ej: "601" -> "E.S.A. | 601 | P3 | S1"). Con varias marcadas se deja el nombre como plantilla.
+            classesBox.addEventListener('change', () => {
+                const checked = Array.from(classesBox.querySelectorAll('input.zg-copy-slot-class:checked'));
+                if (checked.length === 1) {
+                    const labelText = checked[0].parentElement ? checked[0].parentElement.textContent.trim() : '';
+                    if (labelText) nameInp.value = updateQuizNameGrade(nameInp.value, labelText);
+                }
+                updateCopySlotPreview();
+            });
+            nameInp.addEventListener('input', updateCopySlotPreview);
+            return slot;
+        };
+
+        const renumberCopySlots = () => {
+            Array.from(slotsBox.querySelectorAll('.zg-copy-slot')).forEach((slot, i) => {
+                const lbl = slot.querySelector('label');
+                if (lbl) lbl.textContent = `Copia ${i + 1}`;
+            });
+        };
+
+        // Primera fila por defecto: el modal se muestra al instante con las clases "cargando"
+        slotsBox.appendChild(createCopySlot(suggestedName, 0,
+            '<div style="padding:8px; font-size:12px; color:#64748b;"><i class="fa fa-spinner fa-spin"></i> Cargando clases...</div>'
+        ));
+
+        // El botón Copiar queda bloqueado hasta que cargue la información del quiz
+        acceptBtn.disabled = true;
+        acceptBtn.style.opacity = '0.5';
+        acceptBtn.title = 'Cargando información del quiz...';
+
+        const cleanup = () => overlay.remove();
+        cancelBtn.addEventListener('click', cleanup);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+        const firstSlotName = slotsBox.querySelector('.zg-copy-slot-name');
+        if (firstSlotName) { firstSlotName.focus(); firstSlotName.select(); }
+
+        acceptBtn.addEventListener('click', async () => {
+            if (!formAction) {
+                alert('Aún se está cargando la información del quiz. Inténtalo en un momento.');
+                return;
+            }
+            const slots = Array.from(slotsBox.querySelectorAll('.zg-copy-slot'));
+            const copies = [];
+            for (const slot of slots) {
+                const nameVal = slot.querySelector('.zg-copy-slot-name').value.trim();
+                if (!nameVal) continue;
+                const checked = Array.from(slot.querySelectorAll('input.zg-copy-slot-class:checked'));
+                if (checked.length === 0) {
+                    copies.push({ name: nameVal, classes: [] });
+                } else {
+                    // Una copia individual por cada clase marcada
+                    for (const cb of checked) {
+                        const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
+                        copies.push({ name: updateQuizNameGrade(nameVal, labelText), classes: [cb.value] });
+                    }
+                }
+            }
+
+            if (copies.length === 0) {
+                alert('Escribe el nombre de al menos una copia.');
+                return;
+            }
+
+            acceptBtn.disabled = true;
+            acceptBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Copiando...';
+
+            // Crear las copias una a una, cada una con su nombre y su clase
+            const created = [];
+            for (const copy of copies) {
+                try {
+                    const params = new URLSearchParams();
+                    Object.entries(formFields).forEach(([k, v]) => params.append(k, v));
+                    params.append('newQuizName', copy.name);
+                    copy.classes.forEach(c => params.append('classList', c));
+
+                    const saveResp = await fetch(formAction, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: params.toString(),
+                        credentials: 'include'
+                    });
+
+                    if (!saveResp.ok) {
+                        console.warn('⚠️ [ZipGrade] No se pudo copiar "' + copy.name + '" (HTTP ' + saveResp.status + ').');
+                        continue;
+                    }
+
+                    // Si ZipGrade redirige al detalle del nuevo quiz, capturar su id
+                    const newQuizMatch = saveResp.url.match(/\/quiz\/([^/]+)\/all\//);
+                    created.push({ quizId: newQuizMatch ? newQuizMatch[1] : null, copy });
+                } catch (err) {
+                    console.error('❌ [ZipGrade] Error al copiar quiz:', err);
+                }
+                // Pequeña pausa entre copias para no saturar el servidor
+                if (copies.length > 1) await new Promise(r => setTimeout(r, 500));
+            }
+
+            if (created.length === 0) {
+                alert('No se pudo copiar ningún quiz (revisa la consola).');
+                acceptBtn.disabled = false;
+                acceptBtn.innerHTML = '<i class="fa fa-copy"></i> Copiar';
+                return;
+            }
+
+            // Heredar la fecha original y aplicar la clase de cada copia vía el endpoint de edición
+            // (el endpoint de copia puede ignorar classList, por eso se re-aplican después).
+            let applied = 0;
+            for (const item of created) {
+                if (!item.quizId) continue;
+                const ok = await applyCopySettingsToQuiz(item.quizId, sourceDateIso || '', item.copy.classes);
+                if (ok) applied++;
+            }
+
+            cleanup();
+            const n = created.length;
+            const verb = n === 1 ? 'Se creó' : 'Se crearon';
+            const copiaWord = n === 1 ? 'copia' : 'copias';
+            const allApplied = applied === n;
+            const msg = allApplied
+                ? `✅ ${verb} ${n} ${copiaWord}.`
+                : `✅ ${verb} ${n} ${copiaWord} (${applied} con fecha/clase aplicadas).`;
+            showZgToast(msg, 'success');
+            setTimeout(() => window.location.reload(), 1500);
+        });
+
+        // Cargar el formulario de copia en segundo plano (el modal ya está abierto):
+        // la columna Estado ya descarga las páginas /all/; se reutilizan y el modal no espera a la tabla.
+        (async () => {
+            try {
+                let html = zgRawPageGet(quizAllBaseUrl);
+                if (html === null) {
+                    const res = await customRequest({ method: 'GET', url: quizAllBaseUrl }, 45000);
+                    if (res.status !== 200) throw new Error('HTTP ' + res.status);
+                    html = res.responseText || '';
+                    zgRawPageSet(quizAllBaseUrl, html);
+                }
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+
+                // Reutilizar el formulario de copia real de ZipGrade (campos + CSRF)
+                const form = doc.querySelector('form[action*="/quizzes/copyQuiz/"]');
+                if (form) {
+                    formAction = form.getAttribute('action') || '/quizzes/copyQuiz/';
+                    form.querySelectorAll('input, select, textarea').forEach(inp => {
+                        if (!inp.name) return;
+                        if (inp.type === 'checkbox' || inp.type === 'radio') {
+                            if (inp.name === 'classList') {
+                                // Las clases se resuelven con la caché global (mejor label)
+                                formClassValues.push(inp.value);
+                                return;
+                            }
+                            if (inp.checked) formFields[inp.name] = inp.value;
+                            return;
+                        }
+                        formFields[inp.name] = inp.value;
+                    });
+                }
+                csrfToken = extractCSRFToken(doc);
+
+                // Fecha del quiz origen para heredarla en la copia
+                const tds = Array.from(doc.querySelectorAll('td'));
+                for (let i = 0; i < tds.length; i++) {
+                    if (tds[i].innerText.trim() === 'Date:') {
+                        const valTd = tds[i].nextElementSibling;
+                        if (valTd) {
+                            const parsed = parseEnglishDate(valTd.dataset.originalDate || valTd.innerText.trim());
+                            if (parsed) sourceDateIso = parsed;
+                        }
+                        break;
+                    }
+                }
+
+                if (!formAction) throw new Error('No se encontró el formulario de copia de este quiz.');
+
+                // Lista de clases para el selector: usar la caché global (rara vez cambia).
+                // Si no hay caché, descargarla UNA vez (vale para todos los quizzes) y guardarla.
+                const roster = zgClassesGet();
+                if (roster) {
+                    roster.forEach(c => classItems.push({ value: c.value, checked: false, text: c.text }));
+                } else {
+                    try {
+                        const items = await getQuizClassItems(quizAllBaseUrl);
+                        items.forEach(c => classItems.push({ value: c.value, checked: false, text: c.text }));
+                    } catch (e) {
+                        console.warn('⚠️ [ZipGrade] No se pudo cargar la lista de clases; se usan las del formulario de copia.');
+                        // Respaldo: clases que venían en el formulario de copia (sin label)
+                        formClassValues.forEach(v => classItems.push({ value: v, checked: false, text: v }));
+                    }
+                }
+
+                // Completar textos faltantes de las clases (si vinieron del formulario sin label)
+                classItems.forEach(item => {
+                    if (!item.text) item.text = item.value;
+                });
+
+                delete formFields['newQuizName'];
+                delete formFields['classList'];
+                if (csrfToken && !formFields['csrf_token']) formFields['csrf_token'] = csrfToken;
+
+                // Ordenar las clases académicamente (individuos, luego rangos, y Sandbox/Teachers al final).
+                // Ninguna viene preseleccionada: al copiar una plantilla se asignan las clases indicadas.
+                classItems.sort((a, b) => compareClassLabels(a.text, b.text));
+                const classCheckboxHtml = classItems
+                    .map(item => `<label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; padding:2px 0; cursor:pointer; margin:0;"><input type="checkbox" class="zg-copy-slot-class" value="${escapeHtml(item.value)}" style="margin:0; cursor:pointer;" /><span>${escapeHtml(item.text)}</span></label>`)
+                    .join('');
+
+                // Llenar la lista de clases de las filas del modal
+                Array.from(slotsBox.querySelectorAll('.zg-copy-slot-classes-box')).forEach(box => {
+                    box.innerHTML = classCheckboxHtml;
+                });
+
+                acceptBtn.disabled = false;
+                acceptBtn.style.opacity = '';
+                acceptBtn.title = '';
+            } catch (err) {
+                console.error('❌ [ZipGrade] Error cargando el quiz para copiarlo:', err);
+                const box = slotsBox.querySelector('.zg-copy-slot-classes-box');
+                if (box) box.innerHTML = '<div style="padding:8px; font-size:12px; color:#dc2626;">No se pudo cargar la información del quiz. Cierra y vuelve a intentarlo.</div>';
+            }
+        })();
+    }
+
+    // Modal para editar un quiz desde la tabla /quizzes/ (formulario completo)
+    async function showEditQuizModal(quizId, quizName) {
+        const editUrl = `/quiz/${quizId}/edit/`;
+
+        let csrfToken = '';
+        let quizNameVal = '';
+        let answerSheetVal = '';
+        let answerSheetSelect = null;
+        let folderVal = '';
+        let folderSelect = null;
+        let quizDateVal = '';
+        const classItems = [];
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:540px; max-width:94vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        modal.innerHTML = `
+            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-pencil"></i> Editar quiz</h4>
+            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Editando "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".</p>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+                <div>
+                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Nombre del quiz</label>
+                    <input id="zg-edit-name-input" type="text" class="form-control" value="${escapeHtml(quizName)}" style="width:100%; box-sizing:border-box;" />
+                </div>
+                <div style="display:flex; gap:12px;">
+                    <div style="flex:1.4;">
+                        <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Plantilla (Answer Sheet)</label>
+                        <select id="zg-edit-answer-sheet" class="form-control" style="width:100%; box-sizing:border-box;"></select>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Carpeta</label>
+                        <select id="zg-edit-folder" class="form-control" style="width:100%; box-sizing:border-box;"></select>
+                    </div>
+                </div>
+                <div>
+                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Fecha</label>
+                    <div id="zg-edit-date-wrap" style="position:relative; width:100%; height:34px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#fff; pointer-events:none; position:absolute; top:0; left:0; width:100%; height:100%; z-index:1; box-sizing:border-box; border:1px solid #d1d5db; border-radius:6px; padding:0 12px; color:#334155; font-size:13px;">
+                            <span id="zg-edit-date-text" style="color:#334155;">Sin fecha</span>
+                            <i class="fa fa-calendar" style="color:#94a3b8; font-size:14px;"></i>
+                        </div>
+                        <input id="zg-edit-date" type="date" style="position:absolute; top:0; left:0; width:100%; height:100%; opacity:0; z-index:2; cursor:pointer; box-sizing:border-box; background:transparent; border:none;" />
+                    </div>
+                </div>
+                <div>
+                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Clases</label>
+                    <div id="zg-edit-classes" style="max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; background:#f8fafc;"></div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button id="zg-edit-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-edit-save" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-save"></i> Guardar</button>
+            </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        const nameInput = modal.querySelector('#zg-edit-name-input');
+        const asSelect = modal.querySelector('#zg-edit-answer-sheet');
+        const folderSelEl = modal.querySelector('#zg-edit-folder');
+        const dateInput = modal.querySelector('#zg-edit-date');
+        const dateText = modal.querySelector('#zg-edit-date-text');
+        const classesBox = modal.querySelector('#zg-edit-classes');
+        const saveBtn = modal.querySelector('#zg-edit-save');
+
+        // El modal se muestra al instante; la información se carga en segundo plano
+        classesBox.innerHTML = '<div style="padding:8px; font-size:12px; color:#64748b;"><i class="fa fa-spinner fa-spin"></i> Cargando información...</div>';
+        saveBtn.disabled = true;
+        saveBtn.style.opacity = '0.5';
+        saveBtn.title = 'Cargando información del quiz...';
+
+        // Al seleccionar una clase, poner el nombre de la clase tal cual dentro del nombre
+        // (ej: "601" -> "E.S.A. | 601 | P3 | S1"). NO se re-marcan otras clases del mismo grado.
+        const applyEditClassGradeToName = () => {
+            const checked = Array.from(classesBox.querySelectorAll('input[name="classList"]:checked'));
+            const last = checked[checked.length - 1];
+            if (last) {
+                const labelText = last.parentElement ? last.parentElement.textContent.trim() : '';
+                if (labelText) {
+                    nameInput.value = updateQuizNameGrade(nameInput.value, labelText);
+                }
+            }
+        };
+
+        // Si el usuario edita el grado dentro del nombre (ej: cambia "3°" por "4°"),
+        // marcar automáticamente la clase cuyo grado coincida.
+        nameInput.addEventListener('change', () => {
+            const g = extractGradeFromQuizName(nameInput.value);
+            if (g) syncClassFromGrade(classesBox, g);
+        });
+        function updateDateDisplay() {
+            const v = dateInput.value;
+            if (dateText) dateText.textContent = v ? formatQuizDate(v) : 'Sin fecha';
+        }
+        updateDateDisplay();
+        dateInput.addEventListener('input', updateDateDisplay);
+        dateInput.addEventListener('change', updateDateDisplay);
+
+        classesBox.addEventListener('change', (e) => {
+            if (e.target && e.target.type === 'checkbox') {
+                // Selección de UNA sola clase: marcar una desmarca las demás
+                if (e.target.checked) {
+                    Array.from(classesBox.querySelectorAll('input[name="classList"]'))
+                        .forEach(cb => { if (cb !== e.target) cb.checked = false; });
+                }
+                applyEditClassGradeToName();
+            }
+        });
+
+        const cancelBtn = modal.querySelector('#zg-edit-cancel');
+        const cleanup = () => overlay.remove();
+        cancelBtn.addEventListener('click', cleanup);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+        saveBtn.addEventListener('click', async () => {
+            const nameVal = nameInput.value.trim();
+            if (!nameVal) {
+                alert('El nombre del quiz no puede estar vacío.');
+                nameInput.focus();
+                return;
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Guardando...';
+            try {
+                const params = new URLSearchParams();
+                params.append('quizName', nameVal);
+                params.append('answerSheet', asSelect.value || '');
+                params.append('quizDate', dateInput.value || '');
+                params.append('folder', folderSelEl.value || '');
+                if (csrfToken) params.append('csrf_token', csrfToken);
+                classesBox.querySelectorAll('input[name="classList"]:checked').forEach(cb => {
+                    params.append('classList', cb.value);
+                });
+
+                const saveResp = await fetch(editUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: params.toString(),
+                    credentials: 'include'
+                });
+
+                if (saveResp.ok) {
+                    cleanup();
+                    window.location.reload();
+                } else {
+                    alert('No se pudo guardar los cambios (HTTP ' + saveResp.status + ').');
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="fa fa-save"></i> Guardar';
+                }
+            } catch (err) {
+                console.error('❌ [ZipGrade] Error al guardar el quiz:', err);
+                alert('Error al guardar el quiz: ' + err.message);
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fa fa-save"></i> Guardar';
+            }
+        });
+
+        // Cargar el formulario de edición en segundo plano (el modal ya está abierto)
+        (async () => {
+            try {
+                let html = zgRawPageGet(editUrl);
+                if (html === null) {
+                    const res = await customRequest({ method: 'GET', url: editUrl }, 45000);
+                    if (res.status !== 200) throw new Error('HTTP ' + res.status);
+                    html = res.responseText || '';
+                    zgRawPageSet(editUrl, html);
+                }
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+
+                csrfToken = extractCSRFToken(doc);
+                quizNameVal = doc.getElementById('quizName')?.value || '';
+                answerSheetSelect = doc.getElementById('answerSheet') || doc.querySelector('select[name="answerSheet"]');
+                answerSheetVal = answerSheetSelect?.value || '';
+                folderSelect = doc.querySelector('select[name="folder"]');
+                folderVal = folderSelect?.value || '';
+                quizDateVal = doc.getElementById('quizDate')?.value || '';
+
+                // Extraer las clases (con su estado marcado) y refrescar la caché global del roster
+                extractClassListFromEditDoc(doc).forEach(item => classItems.push(item));
+                zgClassesSet(classItems.map(item => ({ value: item.value, text: item.text })));
+
+                if (quizNameVal) nameInput.value = quizNameVal;
+                cloneSelectOptions(asSelect, answerSheetSelect);
+                if (answerSheetVal) asSelect.value = answerSheetVal;
+                cloneSelectOptions(folderSelEl, folderSelect);
+                if (folderVal) folderSelEl.value = folderVal;
+                if (quizDateVal) dateInput.value = quizDateVal;
+                updateDateDisplay();
+
+                // Ordenar las clases académicamente (individuos, luego rangos, y Sandbox/Teachers al final)
+                classItems.sort((a, b) => compareClassLabels(a.text, b.text));
+                const classesHtml = classItems
+                    .map(item => `<label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:12px; color:#334155; cursor:pointer; margin:0;"><input type="checkbox" name="classList" value="${escapeHtml(item.value)}" ${item.checked ? 'checked' : ''} style="margin:0; cursor:pointer;" />${escapeHtml(item.text)}</label>`)
+                    .join('');
+                classesBox.innerHTML = classesHtml;
+
+                saveBtn.disabled = false;
+                saveBtn.style.opacity = '';
+                saveBtn.title = '';
+            } catch (err) {
+                console.error('❌ [ZipGrade] Error cargando el quiz para editar:', err);
+                alert('No se pudo cargar el formulario de edición del quiz.');
+                cleanup();
+            }
+        })();
     }
 
     // ==========================================
@@ -1106,12 +2519,12 @@
         if (theadRow && !theadRow.querySelector('.zg-quiz-th')) {
             const th = document.createElement('th');
             th.className = 'text-center zg-quiz-th sorting_disabled';
-            th.style.cssText = 'vertical-align:middle; width:260px; color:#ffffff;';
+            th.style.cssText = 'vertical-align:middle; text-align:center; width:260px; color:#ffffff;';
             th.innerHTML = `
                 <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
                     <div style="display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" id="zg-quiz-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
-                        <span style="font-weight:700; font-size:12px; color:#ffffff;">Descarga Rápida</span>
+                        <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Descarga Rápida</span>
                     </div>
                     <span id="zg-quiz-counter-badge" class="zg-counter-badge">0 de 0 marcados</span>
                 </div>
@@ -1126,6 +2539,7 @@
 
         // 2. Filas: añadir TD con checkbox + botón individual
         const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const loaders = [];
         rows.forEach(row => {
             if (row.querySelector('.zg-quiz-td')) return;
             const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
@@ -1170,7 +2584,7 @@
             chk.after(select);
 
             // Cargar formatos del quiz de una vez
-            (async () => {
+            loaders.push((async () => {
                 try {
                     const formats = await fetchCustomExportFormats(quizAllBaseUrl);
                     td.dataset.formats = JSON.stringify(formats.map(f => ({
@@ -1200,7 +2614,7 @@
                     select.innerHTML = '<option value="">Error</option>';
                     select.disabled = true;
                 }
-            })();
+            })());
 
             const rowBtn = td.querySelector('.zg-btn-quiz-download');
             rowBtn.addEventListener('click', async (e) => {
@@ -1216,7 +2630,7 @@
                         rowBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
                         try {
                             const type = chosen.xlsx ? 'XLSX' : 'CSV';
-                            const filename = await downloadCustomExport(chosen, type);
+                            const filename = await downloadCustomExport(chosen, type, quizName);
                             console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
                         } catch (err) {
                             console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
@@ -1240,31 +2654,15 @@
 
         updateQuizResultsCounter();
 
-        // 3. Desactivar ordenación/búsqueda de DataTables en las columnas personalizadas (Estado + Descarga Rápida)
-        if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
-            try {
-                const dt = window.jQuery(table).DataTable();
-                const settings = dt.settings()[0];
-                if (settings && settings.aoColumns) {
-                    const totalCols = settings.aoColumns.length;
-                    // Las dos últimas columnas son las personalizadas: Estado (penúltima) y Descarga Rápida (última)
-                    [totalCols - 2, totalCols - 1].forEach(idx => {
-                        const col = settings.aoColumns[idx];
-                        if (col && col.bSortable !== false) {
-                            col.bSortable = false;
-                            col.bSearchable = false;
-                            col.aDataSort = [idx];
-                            col.orderData = [idx];
-                        }
-                    });
-                    if (settings.aaSorting) {
-                        settings.aaSorting = settings.aaSorting.filter(s => s[0] < totalCols - 2);
-                    }
-                }
-            } catch (e) {
-                console.warn("No se pudo desactivar ordenación de las columnas personalizadas:", e);
-            }
+        // Promesa global de carga de formatos: la columna Estado espera por ella antes de
+        // descargar las páginas /all/ pesadas (así los selects llenan todos a la vez).
+        if (loaders.length > 0 && !zgFormatsLoadPromise) {
+            zgFormatsLoadPromise = Promise.allSettled(loaders);
         }
+
+        // 3. Desactivar ordenación/búsqueda de DataTables en las columnas personalizadas
+        // (Estado, Descarga Rápida y Acciones) — centralizado en disableQuizCustomColumnsSort().
+        disableQuizCustomColumnsSort();
 
     }
 
@@ -1341,7 +2739,7 @@
                 }
 
                 const type = fmt.xlsx ? 'XLSX' : 'CSV';
-                const filename = await downloadCustomExport(fmt, type);
+                const filename = await downloadCustomExport(fmt, type, quizName);
                 console.log(`📥 [ZipGrade] ${i + 1}/${checked.length} descargado: ${filename}`);
                 successCount++;
                 await new Promise(r => setTimeout(r, 2000));
@@ -1383,21 +2781,41 @@
     }
 
     function initQuizzesPage() {
+        translateQuizHeaders();
         createQuizzesSortControls();
         sortQuizTable();
         initQuizzesResultsColumn();
-        initQuizStatusColumn();
+        const statusLoadPromise = initQuizStatusColumn();
+        initQuizKeyColumn();
+        initQuizActionsColumn();
+        setupQuizStatusAutoRefresh();
+        setupQuizStatusRefreshButton();
+
+        // Precargar la lista de clases (caché 24 h) una vez que terminen los estados de la tabla,
+        // para que el primer modal de copiar/editar no tenga que descargar la página /edit/.
+        const firstQuizLink = document.querySelector('#quizTable tbody tr a[href*="/quiz/"][href*="/all/"]');
+        if (firstQuizLink && statusLoadPromise) {
+            const firstQuizAllBaseUrl = new URL(firstQuizLink.getAttribute('href'), window.location.origin).pathname;
+            statusLoadPromise.then(() => warmQuizClassListCache(firstQuizAllBaseUrl));
+        }
+
         setTimeout(() => {
+            translateQuizHeaders();
             createQuizzesSortControls();
             sortQuizTable();
             initQuizzesResultsColumn();
             initQuizStatusColumn();
+            initQuizKeyColumn();
+            initQuizActionsColumn();
         }, 400);
         setTimeout(() => {
+            translateQuizHeaders();
             createQuizzesSortControls();
             sortQuizTable();
             initQuizzesResultsColumn();
             initQuizStatusColumn();
+            initQuizKeyColumn();
+            initQuizActionsColumn();
         }, 1000);
 
         // Re-insertar las columnas personalizadas si DataTables redibuja la tabla (ordenar, filtrar, paginar)
@@ -1407,8 +2825,12 @@
             window._zgQuizTableObserver = new MutationObserver(() => {
                 if (reinsertTimer) clearTimeout(reinsertTimer);
                 reinsertTimer = setTimeout(() => {
+                    translateQuizHeaders();
                     initQuizzesResultsColumn();
                     initQuizStatusColumn();
+                    initQuizKeyColumn();
+                    initQuizActionsColumn();
+                    disableQuizCustomColumnsSort();
                 }, 150);
             });
             window._zgQuizTableObserver.observe(tbody, { childList: true });
@@ -1418,6 +2840,43 @@
     // ==========================================
     // 6.3. ORDENAR CLASES ACADÉMICAMENTE EN CREACIÓN/EDICIÓN DE QUIZ
     // ==========================================
+    // Identifica rangos de grados (ej: "1° - 2°", "10° - 11°")
+    function isClassRange(text) {
+        const degreeCount = (text.match(/[°ºª]/g) || []).length;
+        if (degreeCount >= 2) return true;
+        if (text.includes(' - ') && text.includes('°')) return true;
+        return false;
+    }
+
+    // Comparador académico de etiquetas de clase:
+    // individuos primero, luego rangos (ej: "1° - 2°"), y Sandbox/Teachers al final
+    function compareClassLabels(textA, textB) {
+        const a = (textA || '').trim();
+        const b = (textB || '').trim();
+
+        // 1. Sandbox y Teachers al final del todo
+        const isNonAcadA = a.toLowerCase().includes('sandbox') || a.toLowerCase().includes('teacher');
+        const isNonAcadB = b.toLowerCase().includes('sandbox') || b.toLowerCase().includes('teacher');
+        if (isNonAcadA && !isNonAcadB) return 1;
+        if (!isNonAcadA && isNonAcadB) return -1;
+        if (isNonAcadA && isNonAcadB) {
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        // 2. Rangos de grados (ej: "1° - 2°") agrupados después de clases individuales, pero antes de Sandbox/Teachers
+        const isRangeA = isClassRange(a);
+        const isRangeB = isClassRange(b);
+        if (isRangeA && !isRangeB) return 1;
+        if (!isRangeA && isRangeB) return -1;
+
+        // 3. Ambos son rangos o ambos son individuales: ordenar por peso y luego por nombre
+        const weightA = extractGradeWeight(a);
+        const weightB = extractGradeWeight(b);
+        if (weightA !== weightB) return weightA - weightB;
+
+        return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+    }
+
     function sortQuizEditClasses() {
         const classListUl = document.getElementById('classList');
         if (!classListUl) return;
@@ -1425,41 +2884,12 @@
         const items = Array.from(classListUl.querySelectorAll('li'));
         if (items.length <= 1) return;
 
-        // Función para identificar rangos (ej: "1° - 2°", "10° - 11°")
-        function isClassRange(text) {
-            const degreeCount = (text.match(/[°ºª]/g) || []).length;
-            if (degreeCount >= 2) return true;
-            if (text.includes(' - ') && text.includes('°')) return true;
-            return false;
-        }
-
         items.sort((a, b) => {
             const labelA = a.querySelector('label');
             const labelB = b.querySelector('label');
             const textA = labelA ? labelA.innerText.trim() : '';
             const textB = labelB ? labelB.innerText.trim() : '';
-
-            // 1. Sandbox y Teachers al final del todo
-            const isNonAcadA = textA.toLowerCase().includes('sandbox') || textA.toLowerCase().includes('teacher');
-            const isNonAcadB = textB.toLowerCase().includes('sandbox') || textB.toLowerCase().includes('teacher');
-            if (isNonAcadA && !isNonAcadB) return 1;
-            if (!isNonAcadA && isNonAcadB) return -1;
-            if (isNonAcadA && isNonAcadB) {
-                return textA.localeCompare(textB, undefined, { numeric: true, sensitivity: 'base' });
-            }
-
-            // 2. Rangos de grados (ej: "1° - 2°") agrupados después de clases individuales, pero antes de Sandbox/Teachers
-            const isRangeA = isClassRange(textA);
-            const isRangeB = isClassRange(textB);
-            if (isRangeA && !isRangeB) return 1;
-            if (!isRangeA && isRangeB) return -1;
-
-            // 3. Ambos son rangos o ambos son individuales: ordenar por peso y luego por nombre
-            const weightA = extractGradeWeight(textA);
-            const weightB = extractGradeWeight(textB);
-            if (weightA !== weightB) return weightA - weightB;
-
-            return textA.localeCompare(textB, undefined, { numeric: true, sensitivity: 'base' });
+            return compareClassLabels(textA, textB);
         });
 
         // Re-apend en el orden correcto
@@ -1581,6 +3011,98 @@
         return nameVal;
     }
 
+    // ¿Un segmento del nombre es un token de grado (individual "3°" o rango "3° - 5°"/"3° a 5°")?
+    function isGradeToken(p) {
+        if (!p) return false;
+        if (/^(S\d+|P\d+)$/i.test(p)) return false;
+        if (/^\d{1,2}\s*[º°ª]?[A-Za-z]?$/.test(p)) return true;
+        return /^\d{1,2}\s*[º°ª]?[A-Za-z]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?$/i.test(p);
+    }
+
+    // ¿Un segmento del nombre es un código de clase tipo "601" o "1002"?
+    function isClassCodeToken(p) {
+        if (!p) return false;
+        const m = String(p).match(/^\d{3,4}$/);
+        if (!m) return false;
+        const v = parseInt(m[0], 10);
+        return v >= 600 && v <= 1200;
+    }
+
+    // Índice del token que representa la clase dentro del nombre
+    // (grado individual "3°", rango "6° - 9°" o código "601")
+    function findQuizClassTokenIdx(parts) {
+        const gradeIdx = parts.findIndex(isGradeToken);
+        if (gradeIdx !== -1) return gradeIdx;
+        return parts.findIndex(isClassCodeToken);
+    }
+
+    // Actualiza el grado (ej: "4°") dentro del nombre de un quiz con formato "... | 3° | P3 | S1".
+    // Reemplaza el token de grado (individual o rango) donde esté; si no hay, lo agrega al final.
+    // Al aplicar un grado nuevo también quita el sufijo " copy" (el nombre ya pasa a ser distinto)
+    // y elimina duplicados del grado (ej: "... copy | 4°").
+    function updateQuizNameGrade(nameVal, gradeVal) {
+        if (!nameVal) return nameVal;
+        const grade = String(gradeVal || '').trim();
+        const parts = String(nameVal).split('|').map(p => p.trim());
+        const classIdx = findQuizClassTokenIdx(parts);
+        const hadClass = classIdx !== -1;
+        const cleanParts = parts.filter((p, i) => i !== classIdx);
+        if (hadClass) {
+            cleanParts.splice(classIdx, 0, grade || parts[classIdx]);
+        } else if (grade) {
+            cleanParts.push(grade);
+        }
+        let result = cleanParts.join(' | ');
+        if (grade) result = result.replace(/\s*copy(?:\s*\d+)?$/i, '');
+        return result;
+    }
+
+    // Extrae el token de grado del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°")
+    function extractGradeFromQuizName(nameVal) {
+        if (!nameVal) return '';
+        const parts = String(nameVal).split('|').map(p => p.trim());
+        const idx = parts.findIndex(isGradeToken);
+        return idx !== -1 ? parts[idx] : '';
+    }
+
+    // Grado de una clase según su etiqueta (ej: "3°" -> "3°", "6-1" -> "6-1", "1° - 2°" -> "1° - 2°")
+    function extractGradeFromClassLabel(text) {
+        const clean = String(text || '').trim();
+        if (!clean) return '';
+        if (isGradeToken(clean)) return clean;
+        const range = clean.match(/\d{1,2}\s*[º°ª]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?/);
+        if (range && !/^(S\d+|P\d+)$/i.test(range[0])) return range[0];
+        const deg = clean.match(/\d{1,2}[º°ª]/);
+        if (deg) return deg[0];
+        // Códigos tipo "601" (grado 6, sección 01) o "1002" (grado 10, sección 02)
+        const codeMatch = clean.match(/\b(\d{3,4})\b/);
+        if (codeMatch) {
+            const val = parseInt(codeMatch[1], 10);
+            if (val >= 600 && val <= 1200) {
+                const grade = Math.floor(val / 100);
+                return grade + '°';
+            }
+        }
+        const num = clean.match(/^\d{1,2}(?:-\d{1,2})?/);
+        if (num) return num[0];
+        return '';
+    }
+
+    // Marca en la lista de clases (checkbox) la PRIMERA clase cuyo grado coincida con gradeVal
+    // y desmarca todas las demás (selección de UNA sola clase).
+    function syncClassFromGrade(classesBox, gradeVal) {
+        const g = String(gradeVal || '').trim();
+        if (!g || !classesBox) return;
+        const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
+        const match = boxes.find(cb => {
+            const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : '';
+            return extractGradeFromClassLabel(labelText) === g;
+        });
+        if (match) {
+            boxes.forEach(cb => { cb.checked = (cb === match); });
+        }
+    }
+
     // Helper para convertir "September 15, 2026" o "Miércoles 16/SEP/2026" a "2026-09-15"
     function parseEnglishDate(dateStr) {
         if (!dateStr) return null;
@@ -1623,11 +3145,11 @@
         return null;
     }
 
-    async function updateQuizDateViaEdit(targetDate) {
-        console.log(`⏳ [ZipGrade] Heredando la fecha original del quiz: ${targetDate}...`);
-        const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)/);
-        if (!quizIdMatch) return;
-        const quizId = quizIdMatch[1];
+    // Aplica la fecha heredada y las clases indicadas a un quiz recién copiado
+    // usando el endpoint de edición (el endpoint de copia puede ignorar classList).
+    // Devuelve true si la actualización se guardó correctamente.
+    async function applyCopySettingsToQuiz(quizId, targetDate, targetClasses = null) {
+        if (!quizId) return false;
         const editUrl = `/quiz/${quizId}/edit/`;
 
         try {
@@ -1648,13 +3170,18 @@
             const params = new URLSearchParams();
             params.append('quizName', adjustedQuizName);
             params.append('answerSheet', answerSheet);
-            params.append('quizDate', targetDate); // Asignar fecha heredada
+            if (targetDate) params.append('quizDate', targetDate); // Asignar fecha heredada
             params.append('folder', folder);
             params.append('csrf_token', csrfToken);
 
-            classInputs.forEach(inp => {
-                params.append('classList', inp.value);
-            });
+            if (targetClasses && targetClasses.length) {
+                // Usar las clases indicadas al copiar
+                targetClasses.forEach(c => params.append('classList', c));
+            } else {
+                classInputs.forEach(inp => {
+                    params.append('classList', inp.value);
+                });
+            }
 
             const saveResp = await fetch(editUrl, {
                 method: 'POST',
@@ -1664,14 +3191,23 @@
                 body: params.toString()
             });
 
-            if (saveResp.ok) {
-                console.log(`✅ [ZipGrade] Fecha heredada exitosamente y quiz actualizado: ${targetDate}`);
-                window.location.reload();
-            } else {
-                console.warn("Fallo al actualizar la fecha heredada.");
-            }
+            return saveResp.ok;
         } catch (e) {
-            console.error("Error al heredar fecha de quiz:", e);
+            console.error("Error al actualizar el quiz copiado:", e);
+            return false;
+        }
+    }
+
+    async function updateQuizDateViaEdit(targetDate, targetClasses = null) {
+        const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)/);
+        if (!quizIdMatch) return;
+        const quizId = quizIdMatch[1];
+        const ok = await applyCopySettingsToQuiz(quizId, targetDate, targetClasses);
+        if (ok) {
+            console.log(`✅ [ZipGrade] Quiz actualizado exitosamente (fecha heredada: ${targetDate}, ${(targetClasses && targetClasses.length) ? targetClasses.length + ' clases asignadas' : 'clases sin cambio'}).`);
+            window.location.reload();
+        } else {
+            console.warn("Fallo al actualizar el quiz copiado.");
         }
     }
 
@@ -1688,23 +3224,46 @@
         return name.trim();
     }
 
-    // Construye "Resultados_<nombre truncado hasta sesión>" a partir del filename del servidor
-    // o, como respaldo, del <title> de la página del quiz.
-    function buildResultsFilename(serverFilename, pageTitle, extension) {
+    // Construye "Res - <nombre>" a partir del nombre del quiz (con el ° real), del <title>
+    // de la página del quiz o del filename del servidor. Los separadores (|, _) se
+    // convierten en " - " (guión); el ° se conserva porque Windows lo soporta.
+    function buildResultsFilename(serverFilename, pageTitle, quizName, extension) {
         let base = '';
-        if (serverFilename) {
+        if (quizName) {
+            base = quizName;
+        } else if (pageTitle && /^ZipGrade:\s*Quiz:\s*/i.test(pageTitle)) {
+            base = pageTitle.replace(/^ZipGrade:\s*Quiz:\s*/i, '');
+        } else if (serverFilename) {
             base = serverFilename.replace(/\.[^.]+$/, '');
-        } else if (pageTitle) {
-            base = pageTitle.replace(/^ZipGrade:\s*Quiz:\s*/i, '').replace(/\|/g, '_');
         }
         base = truncateNameToSession(base);
-        // Sanitizar caracteres no válidos en nombres de archivo de Windows
-        base = base.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
-        return `Resultados_${base}.${extension}`;
+        base = cleanResultsBaseName(base);
+        return `Res - ${base}.${extension}`;
+    }
+
+    // Limpieza del nombre de archivo: separadores (|, _) -> " - ", caracteres
+    // inválidos de Windows -> espacio, y se colapsan los guiones consecutivos.
+    // El ° (U+00B0) se conserva tal cual: Windows lo soporta en nombres de archivo.
+    function cleanResultsBaseName(name) {
+        return String(name || '')
+            .replace(/^(?:Resultados|Res)[_-]/i, '') // evitar "Res_Res..." / "Resultados_..."
+            .replace(/[|_]+/g, ' - ')                // separadores -> guión
+            .replace(/[\\/:*?"<>]+/g, ' ')           // inválidos de Windows -> espacio
+            .replace(/\s*-\s*-+\s*/g, ' - ')         // colapsar guiones consecutivos
+            .replace(/\s+/g, ' ')
+            .replace(/^\s*-+\s*/g, '')               // sin guión inicial
+            .replace(/\s*-+\s*$/g, '')               // sin guión final
+            .trim();
     }
 
     // Obtiene los formatos de exportación personalizados del quiz actual
-    async function fetchCustomExportFormats(quizAllBaseUrl) {
+    async function fetchCustomExportFormats(quizAllBaseUrl, bypassCache) {
+        const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
+        const cacheKey = quizId ? 'zg_formats_' + quizId : null;
+        if (cacheKey && !bypassCache) {
+            const cached = zgCacheGet(cacheKey, ZG_FORMATS_CACHE_TTL_MS);
+            if (cached !== null && cached !== undefined) return cached;
+        }
         const listUrl = `${quizAllBaseUrl}exportFormat/list/`;
         const res = await customRequest({ method: 'GET', url: listUrl }, 45000);
         if (res.status !== 200) throw new Error(`HTTP ${res.status} al obtener formatos de exportación`);
@@ -1736,11 +3295,12 @@
             if (type === 'CSV') fmt.csv = new URL(href, window.location.origin).href;
             if (type === 'XLSX') fmt.xlsx = new URL(href, window.location.origin).href;
         });
+        if (cacheKey) zgCacheSet(cacheKey, formats);
         return formats;
     }
 
-    // Descarga un formato personalizado y lo guarda con el nombre "Resultados_..."
-    async function downloadCustomExport(format, preferType) {
+    // Descarga un formato personalizado y lo guarda con el nombre "Res - ..."
+    async function downloadCustomExport(format, preferType, quizName) {
         const url = (preferType === 'CSV' ? (format.csv || format.xlsx) : (format.xlsx || format.csv));
         if (!url) throw new Error('Este formato no tiene enlace de descarga disponible.');
         const ext = url.toUpperCase().includes('/XLSX/') ? 'xlsx' : 'csv';
@@ -1756,7 +3316,7 @@
         if (cd) {
             try { serverFilename = decodeURIComponent(cd[1].trim()); } catch (e) { serverFilename = cd[1].trim(); }
         }
-        const filename = buildResultsFilename(serverFilename, document.title, ext);
+        const filename = buildResultsFilename(serverFilename, document.title, quizName, ext);
         downloadBlob(res.response, filename);
         return filename;
     }
@@ -1901,6 +3461,14 @@
         const copyBtn = document.querySelector('button[data-target="#myModelCopy"]');
         if (copyBtn) {
             copyBtn.addEventListener('click', captureSourceQuizDate);
+            // Al abrir el modal de copia nativo, desmarcar TODAS las clases para que
+            // ninguna venga preseleccionada (el nuevo quiz no hereda las del origen).
+            copyBtn.addEventListener('click', () => {
+                const form = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
+                if (form) {
+                    form.querySelectorAll('input[name="classList"]').forEach(inp => { inp.checked = false; });
+                }
+            });
         }
 
         if (copyForm) {
@@ -1914,11 +3482,18 @@
         // 2. Si venimos de una acción de copia pendiente en este nuevo quiz, procesar
         if (sessionStorage.getItem('zg_copy_pending') === 'true') {
             const targetDate = sessionStorage.getItem('zg_copy_source_date');
+            let targetClasses = null;
+            try {
+                targetClasses = JSON.parse(sessionStorage.getItem('zg_copy_source_classes') || 'null');
+            } catch (e) {
+                targetClasses = null;
+            }
             sessionStorage.removeItem('zg_copy_pending');
             sessionStorage.removeItem('zg_copy_source_date');
+            sessionStorage.removeItem('zg_copy_source_classes');
 
-            if (targetDate) {
-                updateQuizDateViaEdit(targetDate);
+            if (targetDate || (targetClasses && targetClasses.length)) {
+                updateQuizDateViaEdit(targetDate || '', targetClasses);
             }
         }
     }
@@ -1968,7 +3543,7 @@
                     <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
                         <div style="display:flex; align-items:center; gap:6px;">
                             <input type="checkbox" id="zg-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
-                            <span style="font-weight:700; font-size:12px; color:#ffffff;">Descarga Rápida</span>
+                            <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Descarga Rápida</span>
                         </div>
                         <span id="zg-counter-badge" class="zg-counter-badge">
                             0 marcados
