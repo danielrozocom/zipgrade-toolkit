@@ -36,13 +36,15 @@ Haz clic en el siguiente botón para instalar directamente en Tampermonkey con u
    - Detecta automáticamente los *Export Formats* personalizados del quiz: si solo existe uno, lo usa por defecto; si hay varios, muestra un selector con opción Excel/CSV.
    - El archivo se guarda renombrado como `Resultados_<nombre del quiz hasta la sesión>` (ej: `Resultados_Template E.S.A. _ 10_ - 11_ _ P3 _ S2.xlsx`).
 
-7. **📋 Columna "Resultados" en `/quizzes/` (individual y masiva)**:
-   - Nueva columna al final de la tabla con **checkbox + botón de descarga individual** por quiz.
-   - Botón **"Descargar Resultados"** arriba (junto a Delete/Archive) que descarga en lote todos los quizzes marcados, con pausas anti rate-limit.
+7. **📋 Columnas "Estado" y "Descarga Rápida" en `/quizzes/`**:
+   - **Estado**: muestra `escaneados/total (%)` por quiz — los papers calificados vs. el total de estudiantes de su clase, con código de color (rojo/ámbar/verde). El total se toma de `/classes/` (si la clase tiene estudiantes asignados se usa directamente; si es un rango de ordenación como `10° - 11°` con 0, suma automáticamente los estudiantes de sus clases reales `10-1`, `10-2`, `11-1`, `11-2`).
+   - **Descarga Rápida**: checkbox + **selector de formato personalizado** (preseleccionado y bloqueado si solo hay uno) + botón de descarga individual.
+   - Card "ZipGrade Toolkit" con Seleccionar Todo, Modo de Orden, botón **"Descargar Resultados"** en lote con barra de progreso y banner.
    - Cada archivo se renombra automáticamente como `Resultados_<nombre hasta sesión>`.
 
-8. **📅 Formato de fecha en detalle del quiz**:
+8. **📅 Formato de fecha en detalle del quiz y copia de quizzes**:
    - En `/quiz/.../all/`, la fecha `September 16, 2026` se muestra como `Miércoles 16/SEP/2026`.
+   - Al **copiar un quiz**, el nuevo quiz hereda automáticamente la **fecha original** del quiz fuente (la captura se dispara al abrir el modal, hacer clic en "Copy Quiz" o enviar el formulario).
 
 ---
 

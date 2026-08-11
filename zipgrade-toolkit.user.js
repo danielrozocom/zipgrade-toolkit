@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      26.4
+// @version      27.5
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -60,7 +60,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '26.4';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '27.5';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -836,6 +836,241 @@
     }
 
     // ==========================================
+    // 6.2.0. COLUMNA "ESTADO" EN /QUIZZES/ (ESCANEADOS/TOTAL + %)
+    // ==========================================
+    // Cache del mapa clase -> total de estudiantes (de /classes/)
+    let zgClassStudentCountCache = null;
+
+    async function getClassStudentCountMap() {
+        if (zgClassStudentCountCache) return zgClassStudentCountCache;
+        const map = {};
+        try {
+            const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
+            if (res.status === 200) {
+                const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+                const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
+                rows.forEach(row => {
+                    const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
+                    const countEl = row.querySelector('td:nth-child(4) h4') || row.querySelector('td:nth-child(4)');
+                    if (nameEl && countEl) {
+                        const name = nameEl.innerText.trim();
+                        const count = parseInt(countEl.innerText.trim(), 10);
+                        if (name && !isNaN(count)) map[name] = count;
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('⚠️ [ZipGrade] No se pudo obtener el mapa de estudiantes por clase:', e);
+        }
+        zgClassStudentCountCache = map;
+        return map;
+    }
+
+    function getQuizRowClassText(row) {
+        // En DataTables de quizTable:
+        // Columna 0: Checkbox
+        // Columna 1: Folder
+        // Columna 2: Class
+        // Buscar el TH "Class" para obtener el índice exacto de columna por si cambia
+        const table = row.closest('table');
+        if (table) {
+            const ths = Array.from(table.querySelectorAll('thead th'));
+            const classIdx = ths.findIndex(th => th.innerText.toLowerCase().includes('class'));
+            if (classIdx !== -1 && row.cells[classIdx]) {
+                return row.cells[classIdx].innerText.trim();
+            }
+        }
+        const cell = row.cells[2];
+        if (!cell) return '';
+        return cell.innerText.trim();
+    }
+
+    // Obtiene papers escaneados de la página /all/ del quiz
+    async function fetchQuizStatus(quizAllBaseUrl) {
+        try {
+            const res = await customRequest({ method: 'GET', url: quizAllBaseUrl }, 30000);
+            if (res.status !== 200) return null;
+            const html = res.responseText || '';
+
+            // Papers escaneados: fila "Number of Papers:" (regex directa sobre el HTML)
+            let scanned = null;
+            const papersM = html.replace(/\s+/g, ' ').match(/Number of Papers:?<\/b><\/td>\s*<td[^>]*>\s*(\d+)/i);
+            if (papersM) scanned = parseInt(papersM[1], 10);
+
+            // Respaldo de escaneados: filas de la tabla gradedPapers
+            if (scanned === null || isNaN(scanned)) {
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const gpRows = doc.querySelectorAll('#gradedPapers tbody tr');
+                scanned = gpRows ? gpRows.length : 0;
+            }
+            return { scanned };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Obtiene el número total de estudiantes de la clase de un quiz según el mapa de /classes/
+    function getQuizClassStudentCount(quizClassText, classMap) {
+        if (!quizClassText || !classMap) return 0;
+        const quizClassNorm = normalizeClassName(quizClassText);
+
+        // 1. Coincidencia exacta de nombre en /classes/ (solo si tiene más de 0 estudiantes)
+        for (const [clsName, count] of Object.entries(classMap)) {
+            if (normalizeClassName(clsName) === quizClassNorm && count > 0) {
+                return count;
+            }
+        }
+
+        // 2. Si es una clase rango (o una clase vacía de ordenación con 0 estudiantes),
+        // calcular el total sumando los estudiantes de las clases individuales correspondientes.
+        const grades = parseQuizClassGrades(quizClassText);
+        const isRange = grades.length > 1;
+
+        let total = 0;
+        if (isRange) {
+            for (const [clsName, count] of Object.entries(classMap)) {
+                // Ignorar otras clases de tipo rango organizativo (que también tienen 0)
+                if (parseQuizClassGrades(clsName).length > 1) continue;
+                const w = extractGradeWeight(clsName);
+                if (w < 99999 && grades.includes(Math.floor(w / 100))) {
+                    total += count;
+                }
+            }
+        } else if (grades.length === 1) {
+            for (const [clsName, count] of Object.entries(classMap)) {
+                if (parseQuizClassGrades(clsName).length > 1) continue;
+                if (normalizeClassName(clsName) === quizClassNorm) {
+                    total += count;
+                }
+            }
+        }
+        return total;
+    }
+
+    // Normaliza un nombre de clase para compararlo (quita °, º, espacios extra, unifica guiones)
+    function normalizeClassName(text) {
+        if (!text) return '';
+        return text
+            .replace(/[º°ª]/g, '')
+            .replace(/[–—]/g, '-')
+            .replace(/\s*-\s*/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    // Extrae el rango de grados de un texto de clase de quiz.
+    // Rango: "10° - 11°" -> [10,11] (lleva ° o "N - M" con espacios).
+    // Individual: "10-1", "6-1", "601" -> [grado] (el segundo número es sección, NO rango).
+    function parseQuizClassGrades(text) {
+        if (!text) return [];
+        const clean = text.replace(/\s+/g, ' ').trim();
+
+        // Rango explícito: "10° - 11°", "10°-11°", "10 - 11" (con espacios alrededor del guion)
+        const rangeM = clean.match(/(\d{1,2})\s*[º°ª]?\s*[-–]\s*(\d{1,2})\s*[º°ª]/);
+        if (rangeM) {
+            const a = parseInt(rangeM[1], 10), b = parseInt(rangeM[2], 10);
+            const grades = [];
+            for (let g = Math.min(a, b); g <= Math.max(a, b); g++) grades.push(g);
+            return grades;
+        }
+        // Rango sin ° pero con espacios: "10 - 11"
+        const rangeM2 = clean.match(/(\d{1,2})\s+[-–]\s+(\d{1,2})\b/);
+        if (rangeM2) {
+            const a = parseInt(rangeM2[1], 10), b = parseInt(rangeM2[2], 10);
+            const grades = [];
+            for (let g = Math.min(a, b); g <= Math.max(a, b); g++) grades.push(g);
+            return grades;
+        }
+        // Individual: "10-1" (grado 10), "6-1" (grado 6), "601" (grado 6)
+        const w = extractGradeWeight(clean);
+        if (w < 99999) return [Math.floor(w / 100)];
+        return [];
+    }
+
+    // Renderiza el badge visual de Estado en la celda
+    function renderQuizStatusCell(cell, scanned, total) {
+        let pct = 0;
+        if (total > 0) pct = Math.round((scanned / total) * 100);
+        let color = '#ef4444'; // rojo por defecto si total es 0 o % bajo
+        if (total > 0) {
+            if (pct >= 100) color = '#10b981';      // verde completo
+            else if (pct >= 50) color = '#f59e0b';  // ámbar medio
+            else color = '#ef4444';                 // rojo bajo
+        } else if (scanned > 0) {
+            // Si no hay total conocido pero sí escaneados
+            color = '#10b981';
+        }
+
+        cell.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; gap:2px; line-height:1.2;">
+                <span style="font-weight:700; font-size:12px; color:#1e293b;">${scanned}/${total}</span>
+                <span style="font-size:10px; font-weight:700; padding:1px 7px; border-radius:8px; background:${color}; color:#ffffff;">${pct}%</span>
+            </div>
+        `;
+    }
+
+    async function initQuizStatusColumn() {
+        const table = document.getElementById('quizTable');
+        if (!table) return;
+
+        // TH "Estado" antes de "Descarga Rápida" (si existe Descarga Rápida)
+        const theadRow = table.querySelector('thead tr');
+        if (theadRow && !theadRow.querySelector('.zg-status-th')) {
+            const th = document.createElement('th');
+            th.className = 'text-center zg-status-th sorting_disabled';
+            th.style.cssText = 'vertical-align:middle; width:90px; color:#ffffff;';
+            th.innerHTML = `<span style="font-weight:700; font-size:12px; color:#ffffff;">Estado</span>`;
+            const resultsTh = theadRow.querySelector('.zg-quiz-th');
+            if (resultsTh) {
+                theadRow.insertBefore(th, resultsTh);
+            } else {
+                theadRow.appendChild(th);
+            }
+        }
+
+        const classMap = await getClassStudentCountMap();
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        for (const row of rows) {
+            let statusTd = row.querySelector('.zg-status-td');
+            if (!statusTd) {
+                const resultsTd = row.querySelector('.zg-quiz-td');
+                statusTd = document.createElement('td');
+                statusTd.className = 'zg-status-td';
+                statusTd.style.cssText = 'vertical-align:middle; text-align:center;';
+                statusTd.innerHTML = '<i class="fa fa-spinner fa-spin" style="color:#94a3b8;"></i>';
+
+                if (resultsTd) {
+                    row.insertBefore(statusTd, resultsTd);
+                } else {
+                    row.appendChild(statusTd);
+                }
+            }
+
+            if (statusTd.dataset.zgStatusDone === 'true') continue;
+
+            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+            if (!link) {
+                statusTd.innerHTML = '<span style="color:#cbd5e1;">-</span>';
+                statusTd.dataset.zgStatusDone = 'true';
+                continue;
+            }
+            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+
+            // Nombre de la clase leído de la celda "Class" del quizTable
+            const classText = getQuizRowClassText(row);
+
+            // Total de estudiantes para la clase del quiz
+            const total = getQuizClassStudentCount(classText, classMap);
+
+            const status = await fetchQuizStatus(quizAllBaseUrl);
+            const scanned = status ? status.scanned : 0;
+            renderQuizStatusCell(statusTd, scanned, total);
+            statusTd.dataset.zgStatusDone = 'true';
+        }
+    }
+
+    // ==========================================
     // 6.2.1. COLUMNA "RESULTADOS" EN /QUIZZES/ (DESCARGA INDIVIDUAL Y MASIVA)
     // ==========================================
     function updateQuizResultsCounter() {
@@ -1000,26 +1235,29 @@
 
         updateQuizResultsCounter();
 
-        // 3. Desactivar ordenación/búsqueda de DataTables en la columna nueva
+        // 3. Desactivar ordenación/búsqueda de DataTables en las columnas personalizadas (Estado + Descarga Rápida)
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
             try {
                 const dt = window.jQuery(table).DataTable();
                 const settings = dt.settings()[0];
                 if (settings && settings.aoColumns) {
-                    const lastIdx = settings.aoColumns.length - 1;
-                    const col = settings.aoColumns[lastIdx];
-                    if (col && col.bSortable !== false) {
-                        col.bSortable = false;
-                        col.bSearchable = false;
-                        col.aDataSort = [lastIdx];
-                        col.orderData = [lastIdx];
-                        if (settings.aaSorting) {
-                            settings.aaSorting = settings.aaSorting.filter(s => s[0] !== lastIdx);
+                    const totalCols = settings.aoColumns.length;
+                    // Las dos últimas columnas son las personalizadas: Estado (penúltima) y Descarga Rápida (última)
+                    [totalCols - 2, totalCols - 1].forEach(idx => {
+                        const col = settings.aoColumns[idx];
+                        if (col && col.bSortable !== false) {
+                            col.bSortable = false;
+                            col.bSearchable = false;
+                            col.aDataSort = [idx];
+                            col.orderData = [idx];
                         }
+                    });
+                    if (settings.aaSorting) {
+                        settings.aaSorting = settings.aaSorting.filter(s => s[0] < totalCols - 2);
                     }
                 }
             } catch (e) {
-                console.warn("No se pudo desactivar ordenación de la columna Resultados:", e);
+                console.warn("No se pudo desactivar ordenación de las columnas personalizadas:", e);
             }
         }
 
@@ -1143,18 +1381,21 @@
         createQuizzesSortControls();
         sortQuizTable();
         initQuizzesResultsColumn();
+        initQuizStatusColumn();
         setTimeout(() => {
             createQuizzesSortControls();
             sortQuizTable();
             initQuizzesResultsColumn();
+            initQuizStatusColumn();
         }, 400);
         setTimeout(() => {
             createQuizzesSortControls();
             sortQuizTable();
             initQuizzesResultsColumn();
+            initQuizStatusColumn();
         }, 1000);
 
-        // Re-insertar la columna "Resultados" si DataTables redibuja la tabla (ordenar, filtrar, paginar)
+        // Re-insertar las columnas personalizadas si DataTables redibuja la tabla (ordenar, filtrar, paginar)
         const tbody = document.querySelector('#quizTable tbody');
         if (tbody && !window._zgQuizTableObserver) {
             let reinsertTimer = null;
@@ -1162,6 +1403,7 @@
                 if (reinsertTimer) clearTimeout(reinsertTimer);
                 reinsertTimer = setTimeout(() => {
                     initQuizzesResultsColumn();
+                    initQuizStatusColumn();
                 }, 150);
             });
             window._zgQuizTableObserver.observe(tbody, { childList: true });
@@ -1334,23 +1576,45 @@
         return nameVal;
     }
 
-    // Helper para convertir "September 15, 2026" a "2026-09-15"
+    // Helper para convertir "September 15, 2026" o "Miércoles 16/SEP/2026" a "2026-09-15"
     function parseEnglishDate(dateStr) {
+        if (!dateStr) return null;
         const months = {
             january: '01', february: '02', march: '03', april: '04',
             may: '05', june: '06', july: '07', august: '08',
             september: '09', october: '10', november: '11', december: '12'
         };
-        const match = dateStr.trim().match(/^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
-        if (match) {
-            const mName = match[1].toLowerCase();
-            const day = match[2].padStart(2, '0');
-            const year = match[3];
+        const spanishMonths = {
+            ene: '01', feb: '02', mar: '03', abr: '04',
+            may: '05', jun: '06', jul: '07', ago: '08',
+            sep: '09', oct: '10', nov: '11', dic: '12'
+        };
+
+        const clean = dateStr.trim();
+
+        // 1. Formato inglés: "September 16, 2026"
+        const matchEng = clean.match(/^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
+        if (matchEng) {
+            const mName = matchEng[1].toLowerCase();
+            const day = matchEng[2].padStart(2, '0');
+            const year = matchEng[3];
             const month = months[mName];
-            if (month) {
-                return `${year}-${month}-${day}`;
-            }
+            if (month) return `${year}-${month}-${day}`;
         }
+
+        // 2. Formato español ya formateado por el toolkit: "Miércoles 16/SEP/2026" o "16/SEP/2026"
+        const matchEsp = clean.match(/(\d{1,2})\/([A-Za-z]{3})\/(\d{4})/);
+        if (matchEsp) {
+            const day = matchEsp[1].padStart(2, '0');
+            const mName = matchEsp[2].toLowerCase();
+            const year = matchEsp[3];
+            const month = spanishMonths[mName];
+            if (month) return `${year}-${month}-${day}`;
+        }
+
+        // 3. Formato ISO ya existente: "2026-09-16"
+        if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+
         return null;
     }
 
@@ -1605,30 +1869,41 @@
             newQuizNameInput.value = adjustQuizNameFormat(newQuizNameInput.value);
         }
 
-        // 1. Interceptar click en submit del modal "Copy Quiz" para almacenar la fecha origen
+        // 1. Guardar la fecha del quiz origen al abrir/interactuar con el modal de copia o enviar el formulario
         const copyForm = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
+        function captureSourceQuizDate() {
+            const tds = Array.from(document.querySelectorAll('td'));
+            let dateText = '';
+            for (let i = 0; i < tds.length; i++) {
+                if (tds[i].innerText.includes('Date:')) {
+                    const valTd = tds[i].nextElementSibling;
+                    if (valTd) {
+                        dateText = valTd.dataset.originalDate || valTd.innerText.trim();
+                    }
+                    break;
+                }
+            }
+            if (dateText) {
+                const parsedDate = parseEnglishDate(dateText);
+                if (parsedDate) {
+                    sessionStorage.setItem('zg_copy_pending', 'true');
+                    sessionStorage.setItem('zg_copy_source_date', parsedDate);
+                    console.log("💾 [ZipGrade] Guardada fecha de origen para copia:", parsedDate);
+                }
+            }
+        }
+
+        const copyBtn = document.querySelector('button[data-target="#myModelCopy"]');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', captureSourceQuizDate);
+        }
+
         if (copyForm) {
-            copyForm.addEventListener('submit', () => {
-                const tds = Array.from(document.querySelectorAll('td'));
-                let dateText = '';
-                for (let i = 0; i < tds.length; i++) {
-                    if (tds[i].innerText.includes('Date:')) {
-                        const valTd = tds[i].nextElementSibling;
-                        if (valTd) {
-                            dateText = valTd.innerText.trim();
-                        }
-                        break;
-                    }
-                }
-                if (dateText) {
-                    const parsedDate = parseEnglishDate(dateText);
-                    if (parsedDate) {
-                        sessionStorage.setItem('zg_copy_pending', 'true');
-                        sessionStorage.setItem('zg_copy_source_date', parsedDate);
-                        console.log("💾 [ZipGrade] Guardada fecha de origen para copia:", parsedDate);
-                    }
-                }
-            });
+            const submitBtn = copyForm.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.addEventListener('click', captureSourceQuizDate);
+            }
+            copyForm.addEventListener('submit', captureSourceQuizDate);
         }
 
         // 2. Si venimos de una acción de copia pendiente en este nuevo quiz, procesar
