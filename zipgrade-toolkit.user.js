@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      27.6
+// @version      28.5
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -93,6 +93,132 @@
             #subjectTable tbody td {
                 text-align: center !important;
                 vertical-align: middle !important;
+            }
+            #zg-quiz-master-check,
+            #zg-master-check {
+                appearance: none;
+                -webkit-appearance: none;
+                -moz-appearance: none;
+                margin: 0;
+                cursor: pointer;
+                width: 16px;
+                height: 16px;
+                border: 1px solid #b6c2cf;
+                border-radius: 3px;
+                background: #ffffff;
+                display: inline-block;
+                vertical-align: middle;
+                position: relative;
+                outline: none;
+                box-sizing: border-box;
+            }
+            #zg-quiz-master-check:hover,
+            #zg-master-check:hover {
+                border-color: #3c87c8;
+            }
+            #zg-quiz-master-check:checked,
+            #zg-master-check:checked {
+                background: #3c87c8;
+                border-color: #3c87c8;
+            }
+            #zg-quiz-master-check:checked::after,
+            #zg-master-check:checked::after {
+                content: "";
+                position: absolute;
+                left: 5px;
+                top: 2px;
+                width: 4px;
+                height: 8px;
+                border: solid #ffffff;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            }
+            #zg-quiz-master-check:indeterminate::after,
+            #zg-master-check:indeterminate::after {
+                content: "";
+                position: absolute;
+                left: 3px;
+                top: 7px;
+                width: 8px;
+                height: 2px;
+                background: #3c87c8;
+                border: none;
+                transform: none;
+                box-sizing: border-box;
+            }
+            #quizTable tbody input[name="quizList"],
+            #subjectTable tbody tr td:first-child input[type="checkbox"] {
+                appearance: none;
+                -webkit-appearance: none;
+                -moz-appearance: none;
+                margin: 0;
+                cursor: pointer;
+                width: 16px;
+                height: 16px;
+                border: 1px solid #b6c2cf;
+                border-radius: 3px;
+                background: #ffffff;
+                display: inline-block;
+                vertical-align: middle;
+                position: relative;
+                outline: none;
+                box-sizing: border-box;
+            }
+            #quizTable tbody input[name="quizList"]:checked,
+            #subjectTable tbody tr td:first-child input[type="checkbox"]:checked {
+                background: #3c87c8;
+                border-color: #3c87c8;
+            }
+            #quizTable tbody input[name="quizList"]:checked::after,
+            #subjectTable tbody tr td:first-child input[type="checkbox"]:checked::after {
+                content: "";
+                position: absolute;
+                left: 5px;
+                top: 2px;
+                width: 4px;
+                height: 8px;
+                border: solid #ffffff;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            }
+            #quizTable tbody div.checker,
+            #subjectTable tbody div.checker {
+                display: inline-block;
+                vertical-align: middle;
+                width: 16px;
+                height: 16px;
+            }
+            #quizTable tbody div.checker span,
+            #subjectTable tbody div.checker span {
+                display: inline-block;
+                position: relative;
+                width: 16px;
+                height: 16px;
+                background: #ffffff !important;
+                border: 1px solid #b6c2cf !important;
+                border-radius: 3px;
+                box-sizing: border-box;
+                text-align: center;
+            }
+            #quizTable tbody div.checker span.checked,
+            #subjectTable tbody div.checker span.checked {
+                background: #3c87c8 !important;
+                border-color: #3c87c8 !important;
+            }
+            #quizTable tbody div.checker span.checked::after,
+            #subjectTable tbody div.checker span.checked::after {
+                content: "";
+                position: absolute;
+                left: 5px;
+                top: 2px;
+                width: 4px;
+                height: 8px;
+                border: solid #ffffff;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+                box-sizing: border-box;
             }
         `;
         document.head.appendChild(style);
@@ -457,8 +583,7 @@
     function loadSavedMappingsFromStorage() {
         try {
             // Limpiar selecciones actuales primero
-            const allChecks = document.querySelectorAll('.zg-row-check');
-            allChecks.forEach(chk => chk.checked = false);
+            getNativeClassChecks().forEach(chk => setNativeCheckboxChecked(chk, false));
             const allSelects = document.querySelectorAll('.zg-row-sheet');
             allSelects.forEach(s => s.value = '');
 
@@ -473,8 +598,7 @@
                 const name = s.dataset.className;
                 if (mappings[name]) {
                     s.value = mappings[name];
-                    const chk = s.closest('td')?.querySelector('.zg-row-check');
-                    if (chk) chk.checked = true;
+                    setNativeCheckboxChecked(getNativeClassCheckbox(s.closest('tr')), true);
                 }
             });
             updateSelectedCounter();
@@ -483,13 +607,35 @@
         }
     }
 
+    // Casillas NATIVAS de ZipGrade en la tabla de /classes/ (columna 0). Es la
+    // ÚNICA fuente de selección desde que se unificaron los checkboxes del toolkit.
+    function getNativeClassCheckbox(row) {
+        if (!row) return null;
+        return row.querySelector('td:first-child input[type="checkbox"], td input[type="checkbox"]');
+    }
+
+    function getNativeClassChecks() {
+        return Array.from(document.querySelectorAll('#subjectTable tbody tr'))
+            .filter(row => row.querySelector('.zg-row-sheet'))
+            .map(getNativeClassCheckbox)
+            .filter(Boolean);
+    }
+
     function updateSelectedCounter() {
-        const checkedCount = document.querySelectorAll('.zg-row-check:checked').length;
-        const totalCount = document.querySelectorAll('.zg-row-check').length;
+        const checks = getNativeClassChecks();
+        const checkedCount = checks.filter(chk => chk.checked).length;
+        const totalCount = checks.length;
         const counterEl = document.getElementById('zg-counter-badge');
         if (counterEl) {
             counterEl.innerText = `${checkedCount} de ${totalCount} marcados`;
             counterEl.classList.toggle('zg-badge-active', checkedCount > 0);
+        }
+        // Sincronizar el estado del master del toolkit según la selección nativa
+        const masterChk = document.getElementById('zg-master-check');
+        if (masterChk) {
+            masterChk.checked = totalCount > 0 && checkedCount === totalCount;
+            masterChk.indeterminate = checkedCount > 0 && checkedCount < totalCount;
+            refreshUniformVisual(masterChk);
         }
     }
 
@@ -825,9 +971,14 @@
 
                 <!-- Fila 2: Acción principal + estado -->
                 <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                    <button id="zg-btn-quiz-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
-                        <i class="fa fa-download"></i> Descargar Resultados
-                    </button>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <button id="zg-btn-quiz-copy-selected" style="background:#f59e0b; color:#ffffff; border:none; padding:8px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(245,158,11,0.25); transition:all 0.2s;">
+                            <i class="fa fa-copy"></i> Copiar Seleccionados
+                        </button>
+                        <button id="zg-btn-quiz-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                            <i class="fa fa-download"></i> Descargar Resultados
+                        </button>
+                    </div>
                     <div id="zg-quiz-status-text" style="font-size:12px; color:#475569; font-weight:500;">
                         <i class="fa fa-info-circle"></i> Listo para procesar.
                     </div>
@@ -841,6 +992,11 @@
                     </div>
                     <div style="width:100%; background:#cbd5e1; height:8px; border-radius:4px; overflow:hidden;">
                         <div id="zg-quiz-progress-bar" style="width:0%; background:#2563eb; height:100%; transition:width 0.3s ease;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:flex-end;">
+                        <button id="zg-quiz-btn-stop" style="background:#ef4444; color:#ffffff; border:none; padding:4px 14px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+                            <i class="fa fa-stop"></i> Detener
+                        </button>
                     </div>
                 </div>
 
@@ -889,16 +1045,18 @@
             });
         }
 
-        // Botones Seleccionar/Deseleccionar Todo
+        // Botones Seleccionar/Deseleccionar Todo (operan sobre las casillas NATIVAS de la tabla)
         const btnSelAll = document.getElementById('zg-quiz-btn-select-all');
         const btnDeselAll = document.getElementById('zg-quiz-btn-deselect-all');
         if (btnSelAll && !btnSelAll.dataset.zgBound) {
             btnSelAll.dataset.zgBound = 'true';
             btnSelAll.addEventListener('click', (e) => {
                 e.preventDefault();
-                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = true);
+                setAllNativeQuizChecks(true);
                 const masterChk = document.getElementById('zg-quiz-master-check');
                 if (masterChk) masterChk.checked = true;
+                const nativeMaster = document.querySelector('#selecctall');
+                if (nativeMaster) setNativeCheckboxChecked(nativeMaster, true);
                 updateQuizResultsCounter();
             });
         }
@@ -906,10 +1064,22 @@
             btnDeselAll.dataset.zgBound = 'true';
             btnDeselAll.addEventListener('click', (e) => {
                 e.preventDefault();
-                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = false);
+                setAllNativeQuizChecks(false);
                 const masterChk = document.getElementById('zg-quiz-master-check');
                 if (masterChk) masterChk.checked = false;
+                const nativeMaster = document.querySelector('#selecctall');
+                if (nativeMaster) setNativeCheckboxChecked(nativeMaster, false);
                 updateQuizResultsCounter();
+            });
+        }
+
+        // Botón Copiar Seleccionados (lote)
+        const copySelBtn = document.getElementById('zg-btn-quiz-copy-selected');
+        if (copySelBtn && !copySelBtn.dataset.zgBound) {
+            copySelBtn.dataset.zgBound = 'true';
+            copySelBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                await showBulkCopyQuizModal();
             });
         }
 
@@ -1405,6 +1575,15 @@
     // páginas /all/ pesadas para que los formatos llenen TODOS los quizzes a la vez.
     let zgFormatsLoadPromise = null;
 
+    // Bandera global de cancelación para la descarga masiva de resultados.
+    let zgQuizDownloadCancelRequested = false;
+
+    // La sincronización de la selección nativa se registra una sola vez.
+    let zgNativeSyncBound = false;
+
+    // Idem para la tabla de /classes/ (subjectTable).
+    let zgClassesNativeSyncBound = false;
+
     // La columna Estado se ejecuta en CADENA: si ya hay una carga en curso (p.ej. los
     // reintentos de 0/400/1000ms y los redibujos de DataTables), se encola en vez de
     // lanzar OTRO bucle concurrente. Antes se disparaban 2-3 bucles a la vez y se
@@ -1413,7 +1592,7 @@
 
     function initQuizStatusColumn(force) {
         const run = zgStatusRunChain.then(() => initQuizStatusColumnNow(force));
-        zgStatusRunChain = run.catch(() => {});
+        zgStatusRunChain = run.catch(() => { });
         return run;
     }
 
@@ -1956,6 +2135,67 @@
         disableQuizCustomColumnsSort();
     }
 
+    // Carga el formulario de copia real de ZipGrade (campos + CSRF) para un quiz.
+    // Reutiliza la página /all/ cacheada por la columna Estado si está disponible.
+    // Devuelve { formAction, formFields, csrfToken, sourceDateIso, formClassValues }.
+    async function loadQuizCopyForm(quizAllBaseUrl) {
+        let html = zgRawPageGet(quizAllBaseUrl);
+        if (html === null) {
+            const res = await customRequest({ method: 'GET', url: quizAllBaseUrl }, 45000);
+            if (res.status !== 200) throw new Error('HTTP ' + res.status);
+            html = res.responseText || '';
+            zgRawPageSet(quizAllBaseUrl, html);
+        }
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        let formAction = null;
+        const formFields = {};
+        const formClassValues = [];
+        let csrfToken = '';
+        let sourceDateIso = null;
+
+        // Reutilizar el formulario de copia real de ZipGrade (campos + CSRF)
+        const form = doc.querySelector('form[action*="/quizzes/copyQuiz/"]');
+        if (form) {
+            formAction = form.getAttribute('action') || '/quizzes/copyQuiz/';
+            form.querySelectorAll('input, select, textarea').forEach(inp => {
+                if (!inp.name) return;
+                if (inp.type === 'checkbox' || inp.type === 'radio') {
+                    if (inp.name === 'classList') {
+                        // Guardar todos los values de classList para referencia (el form de copia los lista todos)
+                        formClassValues.push(inp.value);
+                        return;
+                    }
+                    if (inp.checked) formFields[inp.name] = inp.value;
+                    return;
+                }
+                formFields[inp.name] = inp.value;
+            });
+        }
+        csrfToken = extractCSRFToken(doc);
+
+        // Fecha del quiz origen para heredarla en la copia
+        const tds = Array.from(doc.querySelectorAll('td'));
+        for (let i = 0; i < tds.length; i++) {
+            if (tds[i].innerText.trim() === 'Date:') {
+                const valTd = tds[i].nextElementSibling;
+                if (valTd) {
+                    const parsed = parseEnglishDate(valTd.dataset.originalDate || valTd.innerText.trim());
+                    if (parsed) sourceDateIso = parsed;
+                }
+                break;
+            }
+        }
+
+        if (!formAction) throw new Error('No se encontró el formulario de copia de este quiz.');
+
+        delete formFields['newQuizName'];
+        delete formFields['classList'];
+        if (csrfToken && !formFields['csrf_token']) formFields['csrf_token'] = csrfToken;
+
+        return { formAction, formFields, csrfToken, sourceDateIso, formClassValues };
+    }
+
     // Modal para copiar un quiz desde la tabla /quizzes/
     async function showCopyQuizModal(quizAllBaseUrl, quizName) {
         let formAction = null;
@@ -1975,7 +2215,7 @@
         modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:480px; max-width:94vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
         modal.innerHTML = `
             <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-copy"></i> Copiar quiz</h4>
-            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se crearán copias de "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>" con la fecha original. Agrega una fila por cada grupo de copias; marca una o varias clases y se creará una copia por cada clase.</p>
+            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se crearán copias de "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".<br />En cada fila marca una o varias clases: se crea una copia por cada clase marcada, insertando el curso de la clase en el nombre (ej: "E.S.A. | 601 | P3 | S1").<br />Si no marcas ninguna clase, se crea una sola copia con el nombre tal cual.</p>
             <div style="display:flex; flex-direction:column; gap:12px;">
                 <div>
                     <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 6px 0;">Copias a crear:</label>
@@ -2002,7 +2242,13 @@
             slot.innerHTML = `
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                     <label style="font-weight:600; font-size:11px; color:#334155; margin:0;">Copia ${index + 1}</label>
-                    <button type="button" class="zg-copy-slot-remove btn btn-default btn-xs" style="padding:1px 7px; font-size:11px; border-radius:4px;" title="Quitar esta copia">✕</button>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <label class="zg-copy-slot-auto-next-label" style="display:flex; align-items:center; gap:5px; font-size:11px; color:#7c3aed; font-weight:600; cursor:pointer; white-space:nowrap;" title="Marca automáticamente la clase siguiente a la del quiz">
+                            <input type="checkbox" class="zg-copy-slot-auto-next" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />
+                            &#10024; Auto-siguiente
+                        </label>
+                        <button type="button" class="zg-copy-slot-remove btn btn-default btn-xs" style="padding:1px 7px; font-size:11px; border-radius:4px;" title="Quitar esta copia">✕</button>
+                    </div>
                 </div>
                 <input type="text" class="zg-copy-slot-name" value="${escapeHtml(nameValue)}" placeholder="Nombre de la copia" style="width:100%; box-sizing:border-box; padding:5px 8px; font-size:12px; border:1px solid #cbd5e1; border-radius:6px;" />
                 <div class="zg-copy-slot-classes-box" style="max-height:120px; overflow-y:auto; border:1px solid #cbd5e1; border-radius:6px; background:#fff; padding:6px 10px;">
@@ -2043,9 +2289,11 @@
                 `;
             };
 
-            // Al marcar UNA clase, poner el nombre de la clase tal cual dentro del nombre
-            // (ej: "601" -> "E.S.A. | 601 | P3 | S1"). Con varias marcadas se deja el nombre como plantilla.
+            // Al marcar UNA clase, poner el nombre de la clase tal cual dentro del nombre.
+            // Si el cambio viene del auto-siguiente, no resetear ese checkbox.
             classesBox.addEventListener('change', () => {
+                const autoNextChk = slot.querySelector('.zg-copy-slot-auto-next');
+                if (!slot._suppressAutoNextReset && autoNextChk) autoNextChk.checked = false;
                 const checked = Array.from(classesBox.querySelectorAll('input.zg-copy-slot-class:checked'));
                 if (checked.length === 1) {
                     const labelText = checked[0].parentElement ? checked[0].parentElement.textContent.trim() : '';
@@ -2173,49 +2421,12 @@
         // la columna Estado ya descarga las páginas /all/; se reutilizan y el modal no espera a la tabla.
         (async () => {
             try {
-                let html = zgRawPageGet(quizAllBaseUrl);
-                if (html === null) {
-                    const res = await customRequest({ method: 'GET', url: quizAllBaseUrl }, 45000);
-                    if (res.status !== 200) throw new Error('HTTP ' + res.status);
-                    html = res.responseText || '';
-                    zgRawPageSet(quizAllBaseUrl, html);
-                }
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-
-                // Reutilizar el formulario de copia real de ZipGrade (campos + CSRF)
-                const form = doc.querySelector('form[action*="/quizzes/copyQuiz/"]');
-                if (form) {
-                    formAction = form.getAttribute('action') || '/quizzes/copyQuiz/';
-                    form.querySelectorAll('input, select, textarea').forEach(inp => {
-                        if (!inp.name) return;
-                        if (inp.type === 'checkbox' || inp.type === 'radio') {
-                            if (inp.name === 'classList') {
-                                // Las clases se resuelven con la caché global (mejor label)
-                                formClassValues.push(inp.value);
-                                return;
-                            }
-                            if (inp.checked) formFields[inp.name] = inp.value;
-                            return;
-                        }
-                        formFields[inp.name] = inp.value;
-                    });
-                }
-                csrfToken = extractCSRFToken(doc);
-
-                // Fecha del quiz origen para heredarla en la copia
-                const tds = Array.from(doc.querySelectorAll('td'));
-                for (let i = 0; i < tds.length; i++) {
-                    if (tds[i].innerText.trim() === 'Date:') {
-                        const valTd = tds[i].nextElementSibling;
-                        if (valTd) {
-                            const parsed = parseEnglishDate(valTd.dataset.originalDate || valTd.innerText.trim());
-                            if (parsed) sourceDateIso = parsed;
-                        }
-                        break;
-                    }
-                }
-
-                if (!formAction) throw new Error('No se encontró el formulario de copia de este quiz.');
+                const copyInfo = await loadQuizCopyForm(quizAllBaseUrl);
+                formAction = copyInfo.formAction;
+                Object.assign(formFields, copyInfo.formFields);
+                csrfToken = copyInfo.csrfToken;
+                sourceDateIso = copyInfo.sourceDateIso;
+                copyInfo.formClassValues.forEach(v => formClassValues.push(v));
 
                 // Lista de clases para el selector: usar la caché global (rara vez cambia).
                 // Si no hay caché, descargarla UNA vez (vale para todos los quizzes) y guardarla.
@@ -2238,10 +2449,6 @@
                     if (!item.text) item.text = item.value;
                 });
 
-                delete formFields['newQuizName'];
-                delete formFields['classList'];
-                if (csrfToken && !formFields['csrf_token']) formFields['csrf_token'] = csrfToken;
-
                 // Ordenar las clases académicamente (individuos, luego rangos, y Sandbox/Teachers al final).
                 // Ninguna viene preseleccionada: al copiar una plantilla se asignan las clases indicadas.
                 classItems.sort((a, b) => compareClassLabels(a.text, b.text));
@@ -2254,6 +2461,37 @@
                     box.innerHTML = classCheckboxHtml;
                 });
 
+                // Conectar el checkbox Auto-siguiente de cada slot
+                Array.from(slotsBox.querySelectorAll('.zg-copy-slot')).forEach(slot => {
+                    const autoNextChk = slot.querySelector('.zg-copy-slot-auto-next');
+                    const box = slot.querySelector('.zg-copy-slot-classes-box');
+                    const nameInp = slot.querySelector('.zg-copy-slot-name');
+                    if (!autoNextChk || !box) return;
+                    autoNextChk.addEventListener('change', () => {
+                        const boxes = Array.from(box.querySelectorAll('input.zg-copy-slot-class'));
+                        slot._suppressAutoNextReset = true;
+                        boxes.forEach(cb => { cb.checked = false; });
+                        if (autoNextChk.checked) {
+                            const nextVal = getNextClassInRoster(quizName, classItems);
+                            if (nextVal) {
+                                const target = boxes.find(cb => cb.value === nextVal);
+                                if (target) {
+                                    target.checked = true;
+                                    const labelText = target.parentElement ? target.parentElement.textContent.trim() : '';
+                                    if (labelText && nameInp) nameInp.value = updateQuizNameGrade(nameInp.value, labelText);
+                                }
+                            }
+                        } else {
+                            // Al desmarcar, limpiar nombre a la base sin clase
+                            if (nameInp) nameInp.value = suggestedName;
+                        }
+                        slot._suppressAutoNextReset = false;
+                        // Disparar preview
+                        box.dispatchEvent(new Event('change'));
+                        slot._suppressAutoNextReset = false;
+                    });
+                });
+
                 acceptBtn.disabled = false;
                 acceptBtn.style.opacity = '';
                 acceptBtn.title = '';
@@ -2263,6 +2501,432 @@
                 if (box) box.innerHTML = '<div style="padding:8px; font-size:12px; color:#dc2626;">No se pudo cargar la información del quiz. Cierra y vuelve a intentarlo.</div>';
             }
         })();
+    }
+
+    // Devuelve los quizzes marcados con las casillas NATIVAS de la tabla
+    // (columna 0: input[name="quizList"]). Es la ÚNICA fuente de selección
+    // desde que se unificaron los checkboxes.
+    function getSelectedQuizzes() {
+        const result = [];
+        // Detectar el índice de la columna "Class" en el encabezado de la tabla
+        let classColIdx = -1;
+        const headerCells = Array.from(document.querySelectorAll('#quizTable thead th, #quizTable thead td'));
+        classColIdx = headerCells.findIndex(th => th.innerText.toLowerCase().includes('class'));
+        document.querySelectorAll('#quizTable tbody input[name="quizList"]:checked').forEach(cb => {
+            const row = cb.closest('tr');
+            const link = row ? row.querySelector('td a[href*="/quiz/"][href*="/all/"]') : null;
+            if (!link) return;
+            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+            // Capturar la clase actual del quiz desde la celda "Class" de la fila
+            let currentClassText = '';
+            if (classColIdx !== -1 && row.cells[classColIdx]) {
+                currentClassText = row.cells[classColIdx].innerText.trim();
+            }
+            result.push({ quizAllBaseUrl, quizName: link.innerText.trim() || 'Quiz', currentClassText });
+        });
+        return result;
+    }
+
+    // Extrae el código numérico de clase de un texto (ej: "601" de "E.S.A. | 601 | P3", o "601" directamente).
+    function extractClassCode(text) {
+        const m = String(text || '').match(/\b(\d{3,4})\b/);
+        return m ? m[1] : null;
+    }
+
+    // Dado el VALUE exacto de la clase actual (de formClassValues) y el roster ordenado,
+    // devuelve el VALUE de la siguiente clase en el roster.
+    // Fuente principal: código numérico extraído del NOMBRE del quiz (más confiable que texto de tabla).
+    function getNextClassInRoster(quizName, roster) {
+        if (!roster || roster.length === 0) return null;
+        let currentIdx = -1;
+
+        // Estrategia 1: extraer código numérico del nombre del quiz (ej: "601" de "E.S.A. | 601 | P3 | S1")
+        // Esta es la fuente más confiable porque el nombre SiEMPRE contiene el código de clase.
+        const codeFromName = extractClassCode(quizName);
+        if (codeFromName) {
+            currentIdx = roster.findIndex(c => extractClassCode(c.text) === codeFromName);
+        }
+
+        // Estrategia 2: coincidencia exacta de texto (tabla o texto directo)
+        if (currentIdx === -1 && quizName) {
+            const cleanText = quizName.trim().toLowerCase();
+            currentIdx = roster.findIndex(c => c.text.trim().toLowerCase() === cleanText);
+        }
+
+        // Estrategia 3: contención parcial
+        if (currentIdx === -1 && quizName) {
+            const cleanText = quizName.trim().toLowerCase();
+            currentIdx = roster.findIndex(c => {
+                const rt = c.text.trim().toLowerCase();
+                return rt && (cleanText.includes(rt) || rt.includes(cleanText));
+            });
+        }
+
+        if (currentIdx === -1) {
+            console.warn('[ZipGrade] Auto-siguiente: no se encontró la clase del quiz en el roster.', { quizName, codeFromName, rosterSample: roster.slice(0, 6).map(c => ({ text: c.text, code: extractClassCode(c.text) })) });
+            return null;
+        }
+        const nextIdx = currentIdx + 1;
+        if (nextIdx < roster.length) return roster[nextIdx].value;
+        console.warn('[ZipGrade] Auto-siguiente: la clase "' + roster[currentIdx].text + '" ya es la última del roster.');
+        return null;
+    }
+
+
+    // Modal para copiar VARIOS quizzes a la vez: igual al modal individual.
+    // Por cada quiz hay checkboxes de clases; se crea una copia por cada clase marcada.
+    // Incluye auto-selección de la siguiente clase si el quiz ya está asignado a una.
+    async function showBulkCopyQuizModal() {
+        const quizzes = getSelectedQuizzes();
+        if (quizzes.length === 0) {
+            alert('Marca al menos un quiz usando las casillas de la tabla (primera columna).');
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:660px; max-width:96vw; max-height:92vh; display:flex; flex-direction:column; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        modal.innerHTML = `
+            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b; flex-shrink:0;"><i class="fa fa-copy"></i> Copiar quizzes seleccionados</h4>
+            <p style="margin:0 0 10px 0; font-size:12px; color:#64748b; flex-shrink:0;">Por cada quiz, marca una o varias clases — se crea una copia aparte por cada clase marcada. El <strong style="color:#7c3aed;">checkbox ✨ Auto-siguiente</strong> pre-selecciona la clase siguiente a la que tenía el quiz.</p>
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:7px 12px; flex-shrink:0; flex-wrap:wrap; gap:6px;">
+                <label style="font-weight:600; font-size:12px; color:#334155; margin:0; white-space:nowrap;"><i class="fa fa-magic"></i> Aplicar clase a todos:</label>
+                <select id="zg-bulk-copy-apply-all" disabled style="flex:1; min-width:140px; padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff;">
+                    <option value="">Cargando clases...</option>
+                </select>
+                <button id="zg-bulk-auto-next-all" disabled class="btn btn-default btn-xs" style="white-space:nowrap; border-radius:6px; font-size:11px; color:#7c3aed; border-color:#c4b5fd; font-weight:600;">&#10024; Auto-sig. a todos</button>
+            </div>
+            <div id="zg-bulk-copy-rows" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; min-height:0;"></div>
+            <div id="zg-bulk-copy-progress" style="display:none; flex-direction:column; gap:4px; margin-top:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; flex-shrink:0;">
+                <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:600; color:#334155;">
+                    <span id="zg-bulk-copy-progress-title">Copiando...</span>
+                    <span id="zg-bulk-copy-progress-percent">0%</span>
+                </div>
+                <div style="width:100%; background:#cbd5e1; height:8px; border-radius:4px; overflow:hidden;">
+                    <div id="zg-bulk-copy-progress-bar" style="width:0%; background:#7c3aed; height:100%; transition:width 0.3s ease;"></div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-shrink:0;">
+                <button id="zg-bulk-copy-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-bulk-copy-accept" class="btn btn-primary btn-sm" disabled style="border-radius:6px; opacity:0.5;"><i class="fa fa-copy"></i> Copiar</button>
+            </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        const rowsBox = modal.querySelector('#zg-bulk-copy-rows');
+        const acceptBtn = modal.querySelector('#zg-bulk-copy-accept');
+        const cancelBtn = modal.querySelector('#zg-bulk-copy-cancel');
+        const cleanup = () => overlay.remove();
+        cancelBtn.addEventListener('click', cleanup);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+        const computeCopyName = (quizName, className) => {
+            const baseName = (adjustQuizNameFormat(quizName.trim()) || quizName.trim())
+                .replace(/^\s*Template\s+/i, '')
+                .replace(/\s+/g, ' ')
+                .trim() + ' copy';
+            return updateQuizNameGrade(baseName, className);
+        };
+
+        // Construye una tarjeta por quiz (igual al slot del modal individual)
+        // currentClassValue: VALUE exacto de la clase actual del quiz (de su formClassValues[0])
+        const buildQuizCard = (q, roster, currentClassValue) => {
+            const card = document.createElement('div');
+            card.className = 'zg-bulk-quiz-card';
+            card.style.cssText = 'border:1px solid #e2e8f0; border-radius:10px; padding:10px 14px; background:#f8fafc;';
+
+            const classCheckboxHtml = roster.map(item =>
+                `<label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; padding:2px 0; cursor:pointer; margin:0;">
+                    <input type="checkbox" class="zg-bulk-quiz-class" value="${escapeHtml(item.value)}" data-label="${escapeHtml(item.text)}" style="margin:0; cursor:pointer;" />
+                    <span>${escapeHtml(item.text)}</span>
+                </label>`
+            ).join('');
+
+            card.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+                    <div style="font-size:12px; font-weight:700; color:#1e293b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;" title="${escapeHtml(q.quizName)}">${escapeHtml(q.quizName)}</div>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:#7c3aed; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0;" title="Auto-selecciona la siguiente clase disponible basada en la clase actual del quiz">
+                        <input type="checkbox" class="zg-bulk-auto-next" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />
+                        ✨ Auto-siguiente
+                    </label>
+                </div>
+                <div class="zg-bulk-classes-box" style="max-height:130px; overflow-y:auto; border:1px solid #cbd5e1; border-radius:6px; background:#fff; padding:6px 10px;">
+                    ${classCheckboxHtml || '<div style="font-size:12px;color:#94a3b8;">Sin clases disponibles</div>'}
+                </div>
+                <div class="zg-bulk-quiz-preview" style="display:none; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px; padding:8px 10px; font-size:11px; color:#3730a3; line-height:1.6; margin-top:6px;"></div>
+            `;
+
+            const classesBox = card.querySelector('.zg-bulk-classes-box');
+            const previewEl = card.querySelector('.zg-bulk-quiz-preview');
+            const autoNextChk = card.querySelector('.zg-bulk-auto-next');
+            card.autoNextChk = autoNextChk;
+
+            // Preview dinámico: muestra los nombres de copia que se generarán
+            const updatePreview = () => {
+                const checked = Array.from(classesBox.querySelectorAll('input.zg-bulk-quiz-class:checked'));
+                if (checked.length === 0) {
+                    previewEl.style.display = 'none';
+                    return;
+                }
+                const names = checked.map(cb => {
+                    const labelText = cb.dataset.label || cb.value;
+                    return computeCopyName(q.quizName, labelText);
+                });
+                previewEl.style.display = 'block';
+                if (names.length === 1) {
+                    previewEl.innerHTML = `→ <strong>${escapeHtml(names[0])}</strong>`;
+                } else {
+                    previewEl.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">Se crearán ${names.length} copias:</div>` +
+                        names.map(n => `<div>• <strong>${escapeHtml(n)}</strong></div>`).join('');
+                }
+            };
+
+            classesBox.addEventListener('change', () => {
+                // Solo cancelar auto-next si fue cambio MANUAL (no programático)
+                if (!card._suppressAutoNextReset) {
+                    autoNextChk.checked = false;
+                }
+                updatePreview();
+            });
+
+            // Lógica del checkbox inteligente "Auto-siguiente"
+            autoNextChk.addEventListener('change', () => {
+                const boxes = Array.from(classesBox.querySelectorAll('input.zg-bulk-quiz-class'));
+                card._suppressAutoNextReset = true;
+                if (autoNextChk.checked) {
+                    boxes.forEach(cb => { cb.checked = false; });
+                    // Usar el nombre del quiz para encontrar la clase actual y pre-marcar la siguiente
+                    const nextVal = getNextClassInRoster(q.quizName, roster);
+                    if (nextVal) {
+                        const target = boxes.find(cb => cb.value === nextVal);
+                        if (target) target.checked = true;
+                    }
+                } else {
+                    boxes.forEach(cb => { cb.checked = false; });
+                }
+                card._suppressAutoNextReset = false;
+                updatePreview();
+            });
+
+            // Método público para que "Aplicar a todos" marque/desmarque una clase específica (toggle)
+            card.applyClass = (value) => {
+                const boxes = Array.from(classesBox.querySelectorAll('input.zg-bulk-quiz-class'));
+                const alreadyChecked = boxes.some(cb => cb.value === value && cb.checked);
+                card._suppressAutoNextReset = true;
+                boxes.forEach(cb => {
+                    cb.checked = !alreadyChecked; // toggle: if already checked, uncheck all; if not, check all
+                });
+                autoNextChk.checked = false;
+                card._suppressAutoNextReset = false;
+                updatePreview();
+            };
+
+            // Método público: activa el auto-siguiente para este card (toggle)
+            card.applyAutoNext = () => {
+                const nextVal = getNextClassInRoster(q.quizName, roster);
+                if (!nextVal) return false;
+                const boxes = Array.from(classesBox.querySelectorAll('input.zg-bulk-quiz-class'));
+                card._suppressAutoNextReset = true;
+                boxes.forEach(cb => { cb.checked = false; });
+                // Marcar la clase siguiente
+                const target = boxes.find(cb => cb.value === nextVal);
+                if (target) {
+                    target.checked = true;
+                    // SCROLL a la clase seleccionada - hacer scroll dentro del card
+                    // Usar el classesBox del closure (es el contenedor scrollable)
+                    if (classesBox) {
+                        classesBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+                // Encontrar y marcar el checkbox auto-siguiente dentro de este card
+                if (card.autoNextChk) {
+                    card.autoNextChk.checked = true;
+                }
+                card._suppressAutoNextReset = false;
+                updatePreview();
+                return true;
+            };
+
+            return card;
+        };
+
+        // Mostrar cards con spinner mientras carga el roster
+        quizzes.forEach(q => {
+            const placeholder = document.createElement('div');
+            placeholder.style.cssText = 'border:1px solid #e2e8f0; border-radius:10px; padding:10px 14px; background:#f8fafc;';
+            placeholder.innerHTML = `
+                <div style="font-size:12px; font-weight:700; color:#1e293b; margin-bottom:6px;">${escapeHtml(q.quizName)}</div>
+                <div style="font-size:12px; color:#64748b;"><i class="fa fa-spinner fa-spin"></i> Cargando clases...</div>
+            `;
+            rowsBox.appendChild(placeholder);
+        });
+
+        // Cargar el roster y reemplazar las tarjetas con checkboxes reales
+        (async () => {
+            let roster = [];
+            try {
+                roster = await getQuizClassItems(quizzes[0].quizAllBaseUrl);
+            } catch (e) {
+                roster = [];
+            }
+            roster.sort((a, b) => compareClassLabels(a.text, b.text));
+
+            // Cargar formClassValues de cada quiz en paralelo para obtener el VALUE exacto de su clase actual
+            const classValueMap = {};
+            await Promise.allSettled(quizzes.map(async q => {
+                try {
+                    const info = await loadQuizCopyForm(q.quizAllBaseUrl);
+                    if (info.formClassValues && info.formClassValues.length > 0) {
+                        classValueMap[q.quizAllBaseUrl] = info.formClassValues[0];
+                    }
+                } catch (e) { /* silencioso: se usa texto de la tabla como fallback */ }
+            }));
+
+            // Reemplazar placeholders con tarjetas reales
+            rowsBox.innerHTML = '';
+            quizzes.forEach(q => {
+                const currentClassValue = classValueMap[q.quizAllBaseUrl] || null;
+                rowsBox.appendChild(buildQuizCard(q, roster, currentClassValue));
+            });
+
+            acceptBtn.disabled = false;
+            acceptBtn.style.opacity = '';
+            acceptBtn.title = '';
+
+            // Actualizar label del botón con cuenta de copias totales (plural/singular correcto)
+            const updateAcceptLabel = () => {
+                const total = Array.from(rowsBox.querySelectorAll('input.zg-bulk-quiz-class:checked')).length;
+                if (total === 0) {
+                    acceptBtn.innerHTML = `<i class="fa fa-copy"></i> Copiar`;
+                } else if (total === 1) {
+                    acceptBtn.innerHTML = `<i class="fa fa-copy"></i> Copiar 1 quiz`;
+                } else {
+                    acceptBtn.innerHTML = `<i class="fa fa-copy"></i> Copiar ${total} quizzes`;
+                }
+            };
+            rowsBox.addEventListener('change', updateAcceptLabel);
+            updateAcceptLabel();
+
+            // Botón "Auto-sig. a todos" - DESMARCA TODAS las clases
+            const autoNextAllBtn = modal.querySelector('#zg-bulk-auto-next-all');
+            autoNextAllBtn.disabled = false;
+            autoNextAllBtn.addEventListener('click', () => {
+                // DESMARCAR TODAS las casillas de clase en todos los quizzes
+                Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-class')).forEach(cb => {
+                    cb.checked = false;
+                });
+                // También desmarcar el checkbox auto-siguiente global
+                const globalAutoNext = modal.querySelector('#zg-bulk-auto-next-all');
+                if (globalAutoNext) globalAutoNext.checked = false;
+                updateAcceptLabel();
+            });
+
+            // Poblar y activar el select "Aplicar a todos"
+            const applyAllSel = modal.querySelector('#zg-bulk-copy-apply-all');
+            const applyAllOptions = '<option value="">-- Elegir clase para todos --</option>' +
+                roster.map(c => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.text)}</option>`).join('');
+            applyAllSel.innerHTML = applyAllOptions;
+            applyAllSel.disabled = false;
+            applyAllSel.addEventListener('change', () => {
+                const val = applyAllSel.value;
+                if (!val) return;
+                Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-card')).forEach(card => {
+                    if (card.applyClass) card.applyClass(val);
+                });
+                updateAcceptLabel();
+                // Resetear el select a placeholder tras aplicar
+                applyAllSel.value = '';
+            });
+
+        })();
+
+        acceptBtn.addEventListener('click', async () => {
+            // Recolectar pares (quiz, clase) a copiar
+            const toCopy = [];
+            Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-card')).forEach((card, i) => {
+                const quiz = quizzes[i];
+                const checked = Array.from(card.querySelectorAll('input.zg-bulk-quiz-class:checked'));
+                checked.forEach(cb => {
+                    toCopy.push({ quiz, value: cb.value, text: cb.dataset.label || cb.value });
+                });
+            });
+            if (toCopy.length === 0) {
+                alert('Marca al menos una clase en alguno de los quizzes para crear copias.');
+                return;
+            }
+
+            acceptBtn.disabled = true;
+            cancelBtn.disabled = true;
+            acceptBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Copiando...';
+
+            const progressBox = modal.querySelector('#zg-bulk-copy-progress');
+            const progressTitle = modal.querySelector('#zg-bulk-copy-progress-title');
+            const progressPercent = modal.querySelector('#zg-bulk-copy-progress-percent');
+            const progressBar = modal.querySelector('#zg-bulk-copy-progress-bar');
+            progressBox.style.display = 'flex';
+            progressTitle.innerText = `Copiando 0/${toCopy.length}...`;
+            progressPercent.innerText = '0%';
+            progressBar.style.width = '0%';
+
+            let created = 0;
+            let applied = 0;
+            const fails = [];
+            for (let i = 0; i < toCopy.length; i++) {
+                const { quiz, value, text } = toCopy[i];
+                progressTitle.innerText = `Copiando ${i + 1}/${toCopy.length}: ${quiz.quizName}`;
+                progressBar.style.width = `${Math.round((i / toCopy.length) * 100)}%`;
+                progressPercent.innerText = `${Math.round((i / toCopy.length) * 100)}%`;
+                try {
+                    const copyName = computeCopyName(quiz.quizName, text);
+                    const copyInfo = await loadQuizCopyForm(quiz.quizAllBaseUrl);
+                    const params = new URLSearchParams();
+                    Object.entries(copyInfo.formFields).forEach(([k, v]) => params.append(k, v));
+                    params.append('newQuizName', copyName);
+                    params.append('classList', value);
+
+                    const saveResp = await fetch(copyInfo.formAction, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: params.toString(),
+                        credentials: 'include'
+                    });
+                    if (!saveResp.ok) {
+                        fails.push(`${quiz.quizName} → ${text} (HTTP ${saveResp.status})`);
+                        continue;
+                    }
+
+                    const newQuizMatch = saveResp.url.match(/\/quiz\/([^/]+)\/all\//);
+                    const newQuizId = newQuizMatch ? newQuizMatch[1] : null;
+                    created++;
+                    if (newQuizId) {
+                        const ok = await applyCopySettingsToQuiz(newQuizId, copyInfo.sourceDateIso || '', [value]);
+                        if (ok) applied++;
+                    }
+                } catch (err) {
+                    fails.push(`${quiz.quizName} → ${text} (${err.message || 'error'})`);
+                }
+                if (toCopy.length > 1) await new Promise(r => setTimeout(r, 500));
+            }
+            progressBar.style.width = '100%';
+            progressPercent.innerText = '100%';
+
+            cleanup();
+            const skippedQuizzes = quizzes.filter((q, i) => {
+                const card = rowsBox.querySelectorAll('.zg-bulk-quiz-card')[i];
+                return !card || card.querySelectorAll('input.zg-bulk-quiz-class:checked').length === 0;
+            }).length;
+            const msg = `Se crearon ${created} de ${toCopy.length} cop${toCopy.length === 1 ? 'ia' : 'ias'}` +
+                (applied < created ? ` (${created - applied} sin fecha/clase aplicadas)` : '') +
+                (skippedQuizzes > 0 ? ` | ${skippedQuizzes} quiz(zes) omitidos sin clases` : '');
+            if (fails.length > 0) {
+                showZgToast('✘ ' + msg + '\nFaltaron: ' + fails.join('; '), 'error');
+            } else {
+                showZgToast('✅ ' + msg, 'success');
+            }
+            setTimeout(() => window.location.reload(), 1500);
+        });
     }
 
     // Modal para editar un quiz desde la tabla /quizzes/ (formulario completo)
@@ -2375,10 +3039,134 @@
             }
         });
 
+        // Checkbox Auto-siguiente para la edición individual
+        const autoNextIndividualChk = document.createElement('input');
+        autoNextIndividualChk.type = 'checkbox';
+        autoNextIndividualChk.className = 'zg-edit-auto-next';
+        autoNextIndividualChk.style.cssText = 'margin:0; accent-color:#7c3aed; cursor:pointer;';
+        autoNextIndividualChk.title = "Marca automáticamente la clase siguiente a la que tiene el quiz";
+
+        // Insertar el checkbox auto-siguiente después del label de "Clases"
+        const classesLabel = modal.querySelector('label[for="zg-edit-classes"]') || modal.querySelector('label:contains("Clases")');
+        if (classesLabel) {
+            const classesRow = classesLabel.parentElement;
+            if (classesRow) {
+                const autoNextWrapper = document.createElement('div');
+                autoNextWrapper.style.cssText = 'display:flex; align-items:center; gap:6px; margin-top:4px; font-size:11px; color:#7c3aed; font-weight:600;';
+                // Usar un nombre de clase único para evitar conflictos: zg-edit-auto-next-individual
+                autoNextWrapper.innerHTML = `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" class="zg-edit-auto-next-individual" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />✨ Auto-siguiente</label>`;
+                classesRow.parentNode.insertBefore(autoNextWrapper, classesRow.nextSibling);
+                
+                // Manejar el checkbox Auto-siguiente inmediatamente después de crearlo
+                const individualAutoNextChk = modal.querySelector('.zg-edit-auto-next-individual');
+                if (individualAutoNextChk) {
+                    individualAutoNextChk.addEventListener('change', () => {
+                        // Usar las variables ya disponibles en este scope
+                        if (!classesBox) return;
+                        const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
+                        const quizNameInput = modal.querySelector('#zg-edit-name-input');
+                        const quizName = quizNameInput ? quizNameInput.value : '';
+
+                        if (individualAutoNextChk.checked) {
+                            // Desmarcar todas las clases
+                            boxes.forEach(cb => { cb.checked = false; });
+                            // Buscar el código de clase en el nombre del quiz
+                            const codeMatch = quizName.match(/\b(\d{3,4})\b/);
+                            if (codeMatch) {
+                                const currentCode = codeMatch[1];
+                                // Buscar esta clase en los boxes y marcar la siguiente
+                                const currentBox = boxes.find(cb => {
+                                    const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
+                                    return labelText.includes(currentCode) || cb.value === currentCode;
+                                });
+                                if (currentBox) {
+                                    const currentIdx = boxes.indexOf(currentBox);
+                                    if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
+                                        boxes[currentIdx + 1].checked = true;
+                                        // SCROLL a la clase seleccionada
+                                        if (classesBox) {
+                                            const target = currentBox.parentElement;
+                                            if (target) {
+                                                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Si no hay código de clase en el nombre, marcar la primera clase
+                                    if (boxes.length > 0) {
+                                        boxes[0].checked = true;
+                                        if (boxes[0]) {
+                                            boxes[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        
+        // Ejecutar el handler inmediatamente después de crear el checkbox
+        // El handler ya está configurado en el paso anterior (líneas 3059-3105)
         const cancelBtn = modal.querySelector('#zg-edit-cancel');
         const cleanup = () => overlay.remove();
         cancelBtn.addEventListener('click', cleanup);
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+        // Manejar el checkbox Auto-siguiente en la edición individual
+        autoNextIndividualChk = modal.querySelector('.zg-edit-auto-next');
+        if (autoNextIndividualChk) {
+            autoNextIndividualChk.addEventListener('change', () => {
+                const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
+                const currentVal = null; // Se obtendrá del nombre del quiz
+
+                if (autoNextIndividualChk.checked) {
+                    // Desmarcar todas las clases
+                    boxes.forEach(cb => { cb.checked = false; });
+                    // Buscar la clase actual del quiz y marcar la siguiente
+                    const quizNameInput = modal.querySelector('#zg-edit-name-input');
+                    const quizName = quizNameInput ? quizNameInput.value : '';
+
+                    // Usar la función getNextClassInRoster si está disponible, o buscar en el roster
+                    // Por ahora, intentaremos extraer el código de clase del nombre
+                    const codeMatch = quizName.match(/\b(\d{3,4})\b/);
+                    if (codeMatch) {
+                        const currentCode = codeMatch[1];
+                        // Buscar esta clase en los boxes y marcar la siguiente
+                        const currentBox = boxes.find(cb => {
+                            const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
+                            return labelText.includes(currentCode) || cb.value === currentCode;
+                        });
+                        if (currentBox) {
+                            const currentIdx = boxes.indexOf(currentBox);
+                            if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
+                                boxes[currentIdx + 1].checked = true;
+                                // SCROLL a la clase seleccionada
+                                const container = classesBox.parentElement;
+                                if (container) {
+                                    const target = currentBox.parentElement;
+                                    if (target) {
+                                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Si no hay código de clase en el nombre, marcar la primera clase
+                        if (boxes.length > 0) {
+                            boxes[0].checked = true;
+                            // SCROLL a la primera clase
+                            const firstBox = boxes[0];
+                            if (firstBox) {
+                                firstBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }
+                    }
+                }
+                applyEditClassGradeToName();
+            });
+        }
 
         saveBtn.addEventListener('click', async () => {
             const nameVal = nameInput.value.trim();
@@ -2477,13 +3265,68 @@
     // ==========================================
     // 6.2.1. COLUMNA "RESULTADOS" EN /QUIZZES/ (DESCARGA INDIVIDUAL Y MASIVA)
     // ==========================================
+    // Marca/desmarca una casilla NATIVA de ZipGrade y refresca su visual (uniform azul).
+    function setNativeCheckboxChecked(cb, state) {
+        if (!cb) return;
+        if (cb.checked !== state) {
+            cb.checked = state;
+            cb.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        refreshUniformVisual(cb);
+    }
+
+    // Fuerza a uniform (plugin de checkboxes de ZipGrade) a repintar el estado visual
+    // cuando el toolkit marca/desmarca las casillas nativas programáticamente.
+    // jQuery Uniform pinta el estado con la clase 'checked' en el wrapper (.checker);
+    // se hace toggle directo como fallback para que el visual siga SIEMPRE al estado nativo.
+    function refreshUniformVisual(cb) {
+        if (!cb) return;
+        const state = !!cb.checked;
+        // jQuery Uniform en ZipGrade: el estado visual vive en el SPAN interno que envuelve
+        // al input (<div class="checker"><span class="checked">...). Toggle directo para que
+        // el sprite azul siga SIEMPRE al estado nativo.
+        const innerSpan = cb.parentElement;
+        if (innerSpan) {
+            innerSpan.classList.toggle('checked', state);
+        }
+        const wrapper = cb.closest('.checker, .uniform-checker');
+        if (wrapper && wrapper !== innerSpan) {
+            wrapper.classList.toggle('checked', state);
+        }
+        if (typeof window.jQuery === 'undefined' || !window.jQuery.fn || !window.jQuery.fn.uniform) return;
+        try {
+            const $cb = window.jQuery(cb);
+            if (typeof $cb.uniform === 'function') $cb.uniform('update');
+            if (window.jQuery.uniform && typeof window.jQuery.uniform.update === 'function') {
+                window.jQuery.uniform.update();
+            }
+        } catch (e) {
+            // La casilla no está inicializada por uniform; no pasa nada.
+        }
+    }
+
+    // Marca/desmarca las casillas NATIVAS de la tabla de quizzes y dispara 'change'
+    // para que el plugin visual de ZipGrade actualice la apariencia.
+    function setAllNativeQuizChecks(state) {
+        document.querySelectorAll('#quizTable tbody input[name="quizList"]').forEach(cb => {
+            setNativeCheckboxChecked(cb, state);
+        });
+    }
+
     function updateQuizResultsCounter() {
-        const checked = document.querySelectorAll('.zg-quiz-check:checked').length;
-        const total = document.querySelectorAll('.zg-quiz-check').length;
+        const checked = document.querySelectorAll('#quizTable tbody input[name="quizList"]:checked').length;
+        const total = document.querySelectorAll('#quizTable tbody input[name="quizList"]').length;
         const badge = document.getElementById('zg-quiz-counter-badge');
         if (badge) {
             badge.innerText = `${checked} de ${total} marcados`;
             badge.classList.toggle('zg-badge-active', checked > 0);
+        }
+        // Sincronizar el estado del master del toolkit según la selección nativa
+        const masterChk = document.getElementById('zg-quiz-master-check');
+        if (masterChk) {
+            masterChk.checked = total > 0 && checked === total;
+            masterChk.indeterminate = checked > 0 && checked < total;
+            refreshUniformVisual(masterChk);
         }
     }
 
@@ -2507,9 +3350,9 @@
             th.className = 'text-center zg-quiz-th sorting_disabled';
             th.style.cssText = 'vertical-align:middle; text-align:center; width:260px; color:#ffffff;';
             th.innerHTML = `
-                <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
+<div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
                     <div style="display:flex; align-items:center; gap:6px;">
-                        <input type="checkbox" id="zg-quiz-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
+                        <input type="checkbox" id="zg-quiz-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px; accent-color:#3c87c8;" />
                         <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Descarga Rápida</span>
                     </div>
                     <span id="zg-quiz-counter-badge" class="zg-counter-badge">0 de 0 marcados</span>
@@ -2517,13 +3360,31 @@
             `;
             theadRow.appendChild(th);
 
+            // Columna de Estado por quiz (icón de descarga)
+            const statusTh = document.createElement('th');
+            statusTh.className = 'text-center zg-status-th sorting_disabled';
+            statusTh.style.cssText = 'vertical-align:middle; text-align:center; width:80px; color:#ffffff;';
+            statusTh.innerHTML = '<span style="font-family:\'Open Sans\', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Estado</span>';
+            theadRow.appendChild(statusTh);
+
+            // Mismo título (tooltip) en el master NATIVO de ZipGrade (#selecctall) y su wrapper uniform
+            const nativeMasterInput = document.querySelector('#selecctall');
+            if (nativeMasterInput) {
+                nativeMasterInput.setAttribute('title', 'Seleccionar/Deseleccionar todos');
+                const wrapper = nativeMasterInput.closest('.checker, .uniform-checker');
+                if (wrapper) wrapper.setAttribute('title', 'Seleccionar/Deseleccionar todos');
+            }
+
             th.querySelector('#zg-quiz-master-check').addEventListener('change', (e) => {
-                document.querySelectorAll('.zg-quiz-check').forEach(c => c.checked = e.target.checked);
+                setAllNativeQuizChecks(e.target.checked);
+                // Sincronizar también el master NATIVO de ZipGrade (#selecctall)
+                const nativeMaster = document.querySelector('#selecctall');
+                if (nativeMaster) setNativeCheckboxChecked(nativeMaster, e.target.checked);
                 updateQuizResultsCounter();
             });
         }
 
-        // 2. Filas: añadir TD con checkbox + botón individual
+        // 2. Filas: añadir TD con botón individual + selector de formato
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         const loaders = [];
         rows.forEach(row => {
@@ -2539,21 +3400,15 @@
             const quizName = link.innerText.trim();
             const quizAllBaseUrl = new URL(href, window.location.origin).pathname;
 
+            // La casilla de selección es la NATIVA de ZipGrade (columna 0: input[name="quizList"])
+            const nativeChk = row.querySelector('input[name="quizList"], input.quizCheckbox');
+
             const td = document.createElement('td');
             td.className = 'zg-quiz-td';
             td.style.cssText = 'vertical-align:middle; text-align:center;';
-            td.innerHTML = `
-                <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
-                    <input type="checkbox" class="zg-quiz-check" data-quiz-url="${quizAllBaseUrl}" data-quiz-name="${quizName.replace(/"/g, '&quot;')}" style="margin:0; cursor:pointer; width:15px; height:15px;" />
-                    <button class="zg-btn-quiz-download btn btn-default btn-xs" style="padding:3px 8px;" title="Descargar resultados de este quiz (formato personalizado)">
-                        <i class="fa fa-cloud-download" style="color:#2563eb;"></i>
-                    </button>
-                </div>
-            `;
-            row.appendChild(td);
-
-            const chk = td.querySelector('.zg-quiz-check');
-            chk.addEventListener('change', updateQuizResultsCounter);
+            const cellDiv = document.createElement('div');
+            cellDiv.style.cssText = 'display:inline-flex; gap:6px; align-items:center; justify-content:center;';
+            td.appendChild(cellDiv);
 
             // Selector de formato en la celda (siempre visible, estilo /classes/)
             const select = document.createElement('select');
@@ -2563,11 +3418,31 @@
             select.disabled = true;
             select.addEventListener('change', () => {
                 if (select.value !== '' && select.selectedOptions[0]?.dataset.valid === '1') {
-                    chk.checked = true;
+                    // Elegir un formato marca el quiz como seleccionado (misma casilla nativa)
+                    if (nativeChk && !nativeChk.checked) {
+                        setNativeCheckboxChecked(nativeChk, true);
+                    }
                 }
                 updateQuizResultsCounter();
             });
-            chk.after(select);
+            cellDiv.appendChild(select);
+
+            // Botón de descarga individual a la DERECHA del selector (mismo orden que /classes/)
+            const dlBtn = document.createElement('button');
+            dlBtn.className = 'zg-btn-quiz-download btn btn-default btn-xs';
+            dlBtn.style.cssText = 'padding:3px 8px;';
+            dlBtn.title = 'Descargar resultados de este quiz (formato personalizado)';
+            dlBtn.innerHTML = '<i class="fa fa-cloud-download" style="color:#2563eb;"></i>';
+            cellDiv.appendChild(dlBtn);
+
+            row.appendChild(td);
+
+            // NUEVA: Celda de estado de descarga para este quiz
+            const statusTd = document.createElement('td');
+            statusTd.className = 'zg-download-status-td';
+            statusTd.style.cssText = 'vertical-align:middle; text-align:center;';
+            statusTd.innerHTML = '<span style="font-size:12px; color:#64748b;;">—</span>'; // pending
+            row.appendChild(statusTd);
 
             // Cargar formatos del quiz de una vez
             loaders.push((async () => {
@@ -2578,6 +3453,15 @@
                         csv: f.csv,
                         xlsx: f.xlsx
                     })));
+
+                    // Actualizar estado de descarga
+                    if (statusTd) {
+                        if (formats.length === 0) {
+                            statusTd.innerHTML = '<span style="font-size:12px; color:#64748b;;">Sin formato</span>';
+                        } else {
+                            statusTd.innerHTML = '<span style="font-size:12px; color:#28a745;">✓ Listo</span>';
+                        }
+                    }
 
                     if (formats.length === 0) {
                         select.innerHTML = '<option value="">Sin formato</option>';
@@ -2638,6 +3522,21 @@
             });
         });
 
+        // La selección NATIVA (casillas de fila + master #selecctall de ZipGrade) mantiene
+        // sincronizados el contador y el master del toolkit. Se escucha a nivel documento
+        // para sobrevivir a los redibujos de DataTables.
+        if (!zgNativeSyncBound) {
+            zgNativeSyncBound = true;
+            document.addEventListener('change', (e) => {
+                if (!e.target || !e.target.matches) return;
+                const isNative = e.target.matches('#quizTable tbody input[name="quizList"]') ||
+                    e.target.matches('#uniform-selecctall input, #selecctall');
+                if (isNative) {
+                    setTimeout(() => updateQuizResultsCounter(), 0);
+                }
+            });
+        }
+
         updateQuizResultsCounter();
 
         // Promesa global de carga de formatos: la columna Estado espera por ella antes de
@@ -2676,16 +3575,46 @@
         if (container) container.style.display = 'none';
     }
 
+    // Localiza la celda de "Descarga Rápida" de una fila a partir de la URL del quiz.
+    function getQuizTd(quizAllBaseUrl) {
+        const link = document.querySelector(`#quizTable tbody a[href="${quizAllBaseUrl}"]`);
+        const row = link ? link.closest('tr') : null;
+        return row ? row.querySelector('.zg-quiz-td') : null;
+    }
+
+    // Espera interrumpible: permite detener la descarga masiva incluso durante las
+    // pausas anti rate-limit. Devuelve false si el usuario pidió cancelar.
+    async function sleepWithCancel(ms) {
+        const step = 200;
+        for (let t = 0; t < ms; t += step) {
+            if (zgQuizDownloadCancelRequested) return false;
+            await new Promise(r => setTimeout(r, Math.min(step, ms - t)));
+        }
+        return !zgQuizDownloadCancelRequested;
+    }
+
     // Descarga masiva de resultados para los quizzes marcados en /quizzes/
     async function downloadSelectedQuizResults(bulkBtn) {
-        const checked = Array.from(document.querySelectorAll('.zg-quiz-check:checked'));
-        if (checked.length === 0) {
-            alert('Marca al menos un quiz en la columna "Descarga Rápida".');
+        const quizzes = getSelectedQuizzes();
+        if (quizzes.length === 0) {
+            alert('Marca al menos un quiz usando las casillas de la tabla (primera columna).');
             return;
         }
 
         const bannerEl = document.getElementById('zg-quiz-download-banner');
         if (bannerEl) bannerEl.style.display = 'none';
+
+        // Botón "Detener": muestra el progreso y cancela el lote entre quizzes
+        const stopBtn = document.getElementById('zg-quiz-btn-stop');
+        if (stopBtn && !stopBtn.dataset.zgBound) {
+            stopBtn.dataset.zgBound = 'true';
+            stopBtn.addEventListener('click', () => {
+                zgQuizDownloadCancelRequested = true;
+                updateQuizStatusText('Deteniendo el lote tras el quiz en curso...');
+            });
+        }
+        zgQuizDownloadCancelRequested = false;
+        if (stopBtn) stopBtn.style.display = 'inline-flex';
 
         const originalHtml = bulkBtn.innerHTML;
         bulkBtn.disabled = true;
@@ -2693,19 +3622,22 @@
 
         let successCount = 0;
         let skipCount = 0;
-        for (let i = 0; i < checked.length; i++) {
-            const chk = checked[i];
-            const quizUrl = chk.dataset.quizUrl;
-            const quizName = chk.dataset.quizName;
-            const progressPercent = (i / checked.length) * 90;
+        let stopped = false;
+        for (let i = 0; i < quizzes.length; i++) {
+            if (zgQuizDownloadCancelRequested) { stopped = true; break; }
 
-            setQuizProgressBar(progressPercent, `Descargando ${i + 1}/${checked.length}: ${quizName}`);
-            updateQuizStatusText(`Descargando ${i + 1}/${checked.length}: ${quizName}...`);
-            bulkBtn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> ${i + 1}/${checked.length}`;
+            const quiz = quizzes[i];
+            const quizUrl = quiz.quizAllBaseUrl;
+            const quizName = quiz.quizName;
+            const progressPercent = (i / quizzes.length) * 90;
+
+            setQuizProgressBar(progressPercent, `Descargando ${i + 1}/${quizzes.length}: ${quizName}`);
+            updateQuizStatusText(`Descargando ${i + 1}/${quizzes.length}: ${quizName}...`);
+            bulkBtn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> ${i + 1}/${quizzes.length}`;
 
             try {
                 // Si la fila tiene un formato elegido en su selector, usarlo; si no, el primero
-                const td = chk.closest('.zg-quiz-td');
+                const td = getQuizTd(quizUrl);
                 const rowSelect = td ? td.querySelector('.zg-quiz-format-select') : null;
                 let fmt = null;
 
@@ -2726,28 +3658,33 @@
 
                 const type = fmt.xlsx ? 'XLSX' : 'CSV';
                 const filename = await downloadCustomExport(fmt, type, quizName);
-                console.log(`📥 [ZipGrade] ${i + 1}/${checked.length} descargado: ${filename}`);
+                console.log(`📥 [ZipGrade] ${i + 1}/${quizzes.length} descargado: ${filename}`);
                 successCount++;
-                await new Promise(r => setTimeout(r, 2000));
+                if (!(await sleepWithCancel(2000))) { stopped = true; break; }
             } catch (err) {
                 console.error(`❌ [ZipGrade] Error descargando "${quizName}":`, err);
                 skipCount++;
             }
-            // Pausa anti rate-limit entre quizzes
-            if (i < checked.length - 1) {
-                await new Promise(r => setTimeout(r, 3000));
+            // Pausa anti rate-limit entre quizzes (interrumpible)
+            if (i < quizzes.length - 1 && !(await sleepWithCancel(3000))) {
+                stopped = true;
+                break;
             }
         }
 
         bulkBtn.innerHTML = originalHtml;
         bulkBtn.disabled = false;
+        if (stopBtn) stopBtn.style.display = 'none';
         hideQuizProgressBar();
 
         const totalTime = Math.round((Date.now() - startTime) / 1000);
         const minutes = Math.floor(totalTime / 60);
         const secs = totalTime % 60;
         const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
-        const summary = `${successCount} de ${checked.length} resultados descargados en ${timeStr}` + (skipCount > 0 ? ` (${skipCount} omitidos)` : '');
+        const base = stopped
+            ? `Descarga detenida: ${successCount} de ${quizzes.length} descargados en ${timeStr}`
+            : `${successCount} de ${quizzes.length} resultados descargados en ${timeStr}`;
+        const summary = base + (skipCount > 0 ? ` (${skipCount} omitidos)` : '');
         console.log(`🎉 [ZipGrade] ${summary}`);
         updateQuizStatusText(summary);
 
@@ -2756,12 +3693,14 @@
             const bannerSub = document.getElementById('zg-quiz-banner-subtitle');
             if (bannerTitle) bannerTitle.textContent = summary;
             if (bannerSub) {
-                bannerSub.textContent = skipCount > 0
-                    ? `${skipCount} quiz(zes) se omitieron por no tener formato personalizado.`
-                    : 'Los resultados se han descargado a tu carpeta de descargas.';
+                bannerSub.textContent = stopped
+                    ? 'El lote se detuvo a petición tuya.'
+                    : (skipCount > 0
+                        ? `${skipCount} quiz(zes) se omitieron por no tener formato personalizado.`
+                        : 'Los resultados se han descargado a tu carpeta de descargas.');
             }
             if (bannerEl) bannerEl.style.display = 'flex';
-        } else {
+        } else if (!stopped) {
             alert('No se pudo descargar ningún resultado. Verifica que los quizzes tengan un Export Format personalizado.');
         }
     }
@@ -3527,7 +4466,7 @@
                 newTh.innerHTML = `
                     <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
                         <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="checkbox" id="zg-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px;" />
+                            <input type="checkbox" id="zg-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px; accent-color:#3c87c8;" />
                             <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Descarga Rápida</span>
                         </div>
                         <span id="zg-counter-badge" class="zg-counter-badge">
@@ -3655,7 +4594,6 @@
 
                         td.innerHTML = `
                             <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
-                                <input type="checkbox" class="zg-row-check" data-class-id="${classId}" style="margin:0; cursor:pointer; width:15px; height:15px;" />
                                 <select class="zg-row-sheet" data-class-id="${classId}" data-class-name="${className}" style="padding:4px 6px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; max-width:160px; background:#fff; cursor:pointer;">
                                     <option value="">-- Seleccionar --</option>
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
@@ -3668,18 +4606,14 @@
 
                         row.appendChild(td);
 
-                        // Evento checkbox individual
-                        const chk = td.querySelector('.zg-row-check');
-                        chk.addEventListener('change', () => {
-                            updateSelectedCounter();
-                            saveMappingsToStorage();
-                        });
+                        // La casilla de selección es la NATIVA de ZipGrade (columna 0)
+                        const nativeChk = getNativeClassCheckbox(row);
 
                         // Evento cambio de plantilla
                         const rowSelect = td.querySelector('.zg-row-sheet');
                         rowSelect.addEventListener('change', () => {
-                            if (rowSelect.value) {
-                                chk.checked = true;
+                            if (rowSelect.value && nativeChk && !nativeChk.checked) {
+                                setNativeCheckboxChecked(nativeChk, true);
                             }
                             updateSelectedCounter();
                             saveMappingsToStorage();
@@ -3744,10 +4678,12 @@
 
             // Controles de Selección
             const setAllChecks = (state) => {
-                const checks = document.querySelectorAll('.zg-row-check');
-                checks.forEach(chk => chk.checked = state);
+                getNativeClassChecks().forEach(chk => setNativeCheckboxChecked(chk, state));
                 const masterChk = document.getElementById('zg-master-check');
-                if (masterChk) masterChk.checked = state;
+                if (masterChk) {
+                    masterChk.checked = state;
+                    refreshUniformVisual(masterChk);
+                }
                 updateSelectedCounter();
                 saveMappingsToStorage();
             };
@@ -3769,6 +4705,18 @@
                 });
             }
 
+            // La selección NATIVA de ZipGrade (casillas de fila de #subjectTable) mantiene
+            // sincronizados el contador y el master del toolkit.
+            if (!zgClassesNativeSyncBound) {
+                zgClassesNativeSyncBound = true;
+                document.addEventListener('change', (e) => {
+                    if (!e.target || !e.target.matches) return;
+                    if (e.target.matches('#subjectTable input[type="checkbox"]')) {
+                        setTimeout(() => updateSelectedCounter(), 0);
+                    }
+                });
+            }
+
             document.getElementById('zg-btn-apply-checked').addEventListener('click', (e) => {
                 e.preventDefault();
                 const selectedSheet = document.getElementById('zg-bulk-apply-sheet').value;
@@ -3776,13 +4724,13 @@
                     alert('Selecciona una hoja del menú para aplicar.');
                     return;
                 }
-                const checkedRows = document.querySelectorAll('.zg-row-check:checked');
+                const checkedRows = getNativeClassChecks().filter(chk => chk.checked);
                 if (checkedRows.length === 0) {
                     alert('Marca al menos una casilla en la tabla.');
                     return;
                 }
                 checkedRows.forEach(chk => {
-                    const rowSelect = chk.closest('td').querySelector('.zg-row-sheet');
+                    const rowSelect = chk.closest('tr').querySelector('.zg-row-sheet');
                     if (rowSelect) rowSelect.value = selectedSheet;
                 });
                 saveMappingsToStorage();
@@ -3806,7 +4754,7 @@
                 cancelDownloadRequested = true;
                 console.warn("🛑 [ZipGrade] Cancelación solicitada por el usuario.");
                 const btnStop = e.currentTarget;
-                btnStop.innerText = 'Deteniendo...';
+                btnStop.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Deteniendo...';
                 btnStop.disabled = true;
             });
 
@@ -3892,8 +4840,7 @@
                         const courseName = s.dataset.className;
                         if (configData.mappings[courseName]) {
                             s.value = configData.mappings[courseName];
-                            const chk = s.closest('td')?.querySelector('.zg-row-check');
-                            if (chk) chk.checked = true;
+                            setNativeCheckboxChecked(getNativeClassCheckbox(s.closest('tr')), true);
                         }
                     });
                     updateSelectedCounter();
@@ -3913,11 +4860,11 @@
     // ==========================================
     async function downloadSelectedAsZip() {
         const session = document.getElementById('zg-global-session').value;
-        const checkedBoxes = Array.from(document.querySelectorAll('.zg-row-check:checked'));
+        const checkedBoxes = getNativeClassChecks().filter(chk => chk.checked);
         const queue = [];
 
         checkedBoxes.forEach(chk => {
-            const select = chk.closest('td').querySelector('.zg-row-sheet');
+            const select = chk.closest('tr').querySelector('.zg-row-sheet');
             if (select && select.value) {
                 queue.push({
                     classId: select.dataset.classId,
@@ -3945,7 +4892,7 @@
         if (btnStop) {
             btnStop.style.display = 'inline-block';
             btnStop.disabled = false;
-            btnStop.innerText = '🛑 Detener';
+            btnStop.innerHTML = '<i class="fa fa-stop"></i> Detener';
         }
 
         let successCount = 0;
@@ -4405,4 +5352,4 @@
             initQuizDetailPage();
         }
     }
-})();
+})();// MARKER-TEST-123
