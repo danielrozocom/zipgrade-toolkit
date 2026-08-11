@@ -2661,7 +2661,6 @@
             const classesBox = card.querySelector('.zg-bulk-classes-box');
             const previewEl = card.querySelector('.zg-bulk-quiz-preview');
             const autoNextChk = card.querySelector('.zg-bulk-auto-next');
-            card.autoNextChk = autoNextChk;
 
             // Preview dinámico: muestra los nombres de copia que se generarán
             const updatePreview = () => {
@@ -2735,14 +2734,25 @@
                 if (target) {
                     target.checked = true;
                     // SCROLL a la clase seleccionada - hacer scroll dentro del card
-                    // Usar el classesBox del closure (es el contenedor scrollable)
-                    if (classesBox) {
-                        classesBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const cardElement = card.closest('.zg-bulk-quiz-card');
+                    if (cardElement) {
+                        const targetEl = target.parentElement;
+                        if (targetEl) {
+                            // Scroll dentro del card, buscando el contenedor de clases
+                            const classesContainer = cardElement.querySelector('.zg-bulk-classes-box');
+                            if (classesContainer) {
+                                classesContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            } else {
+                                // Fallback: hacer scroll directo del elemento
+                                targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }
                     }
                 }
                 // Encontrar y marcar el checkbox auto-siguiente dentro de este card
-                if (card.autoNextChk) {
-                    card.autoNextChk.checked = true;
+                const autoNextInCard = cardElement ? cardElement.querySelector('.zg-bulk-auto-next') : null;
+                if (autoNextInCard) {
+                    autoNextInCard.checked = true;
                 }
                 card._suppressAutoNextReset = false;
                 updatePreview();
@@ -3056,59 +3066,65 @@
                 // Usar un nombre de clase único para evitar conflictos: zg-edit-auto-next-individual
                 autoNextWrapper.innerHTML = `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" class="zg-edit-auto-next-individual" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />✨ Auto-siguiente</label>`;
                 classesRow.parentNode.insertBefore(autoNextWrapper, classesRow.nextSibling);
-                
-                // Manejar el checkbox Auto-siguiente inmediatamente después de crearlo
-                const individualAutoNextChk = modal.querySelector('.zg-edit-auto-next-individual');
-                if (individualAutoNextChk) {
-                    individualAutoNextChk.addEventListener('change', () => {
-                        // Usar las variables ya disponibles en este scope
-                        if (!classesBox) return;
-                        const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
-                        const quizNameInput = modal.querySelector('#zg-edit-name-input');
-                        const quizName = quizNameInput ? quizNameInput.value : '';
+            }
+        }
 
-                        if (individualAutoNextChk.checked) {
-                            // Desmarcar todas las clases
-                            boxes.forEach(cb => { cb.checked = false; });
-                            // Buscar el código de clase en el nombre del quiz
-                            const codeMatch = quizName.match(/\b(\d{3,4})\b/);
-                            if (codeMatch) {
-                                const currentCode = codeMatch[1];
-                                // Buscar esta clase en los boxes y marcar la siguiente
-                                const currentBox = boxes.find(cb => {
-                                    const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
-                                    return labelText.includes(currentCode) || cb.value === currentCode;
-                                });
-                                if (currentBox) {
-                                    const currentIdx = boxes.indexOf(currentBox);
-                                    if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
-                                        boxes[currentIdx + 1].checked = true;
-                                        // SCROLL a la clase seleccionada
-                                        if (classesBox) {
-                                            const target = currentBox.parentElement;
-                                            if (target) {
-                                                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                            }
+        // Manejar el checkbox Auto-siguiente en la edición individual
+        // Ejecutar después de un pequeño delay para asegurar que el DOM esté listo
+        setTimeout(() => {
+            const individualAutoNextChk = document.querySelector('.zg-edit-auto-next-individual');
+            if (individualAutoNextChk) {
+                individualAutoNextChk.addEventListener('change', () => {
+                    const classesBox = modal.querySelector('#zg-edit-classes');
+                    if (!classesBox) return;
+                    const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
+                    const quizNameInput = modal.querySelector('#zg-edit-name-input');
+                    const quizName = quizNameInput ? quizNameInput.value : '';
+
+                    if (individualAutoNextChk.checked) {
+                        // Desmarcar todas las clases
+                        boxes.forEach(cb => { cb.checked = false; });
+                        // Buscar el código de clase en el nombre del quiz
+                        const codeMatch = quizName.match(/\b(\d{3,4})\b/);
+                        if (codeMatch) {
+                            const currentCode = codeMatch[1];
+                            // Buscar esta clase en los boxes y marcar la siguiente
+                            const currentBox = boxes.find(cb => {
+                                const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
+                                return labelText.includes(currentCode) || cb.value === currentCode;
+                            });
+                            if (currentBox) {
+                                const currentIdx = boxes.indexOf(currentBox);
+                                if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
+                                    boxes[currentIdx + 1].checked = true;
+                                    // SCROLL a la clase seleccionada
+                                    if (classesBox) {
+                                        const target = currentBox.parentElement;
+                                        if (target) {
+                                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                         }
                                     }
-                                } else {
-                                    // Si no hay código de clase en el nombre, marcar la primera clase
-                                    if (boxes.length > 0) {
-                                        boxes[0].checked = true;
-                                        if (boxes[0]) {
-                                            boxes[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                        }
+                                }
+                            } else {
+                                // Si no hay código de clase en el nombre, marcar la primera clase
+                                if (boxes.length > 0) {
+                                    boxes[0].checked = true;
+                                    if (boxes[0]) {
+                                        boxes[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
                                     }
                                 }
                             }
                         }
-                    });
-                }
+                    }
+                });
             }
-        }
+        }, 500);
         
-        // Ejecutar el handler inmediatamente después de crear el checkbox
-        // El handler ya está configurado en el paso anterior (líneas 3059-3105)
+        // Ejecutar el handler inmediatamente y también observador de DOM
+        individualAutoNextHandler();
+        const observer = new MutationObserver(individualAutoNextHandler);
+        observer.observe(modal, { childList: true, subtree: true });
+
         const cancelBtn = modal.querySelector('#zg-edit-cancel');
         const cleanup = () => overlay.remove();
         cancelBtn.addEventListener('click', cleanup);
