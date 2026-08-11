@@ -1400,20 +1400,6 @@
         });
     }
 
-    // Refresca automáticamente los estados al volver a la pestaña (máx. 1 vez cada 60 s),
-    // para que el conteo se actualice mientras el profesor escanea papeles en otra app.
-    function setupQuizStatusAutoRefresh() {
-        if (window._zgStatusAutoRefresh) return;
-        window._zgStatusAutoRefresh = true;
-        let lastAuto = 0;
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState !== 'visible') return;
-            if (Date.now() - lastAuto < 60 * 1000) return;
-            lastAuto = Date.now();
-            setTimeout(() => { refreshQuizStatuses(); }, 600);
-        });
-    }
-
     // Promesa que resuelve cuando cargan los formatos de la columna "Descarga Rápida"
     // (peticiones ligeras); la columna Estado espera por ellas antes de descargar las
     // páginas /all/ pesadas para que los formatos llenen TODOS los quizzes a la vez.
@@ -2788,7 +2774,6 @@
         const statusLoadPromise = initQuizStatusColumn();
         initQuizKeyColumn();
         initQuizActionsColumn();
-        setupQuizStatusAutoRefresh();
         setupQuizStatusRefreshButton();
 
         // Precargar la lista de clases (caché 24 h) una vez que terminen los estados de la tabla,
