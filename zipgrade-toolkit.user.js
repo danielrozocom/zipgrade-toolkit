@@ -220,7 +220,79 @@
                 transform: rotate(45deg);
                 box-sizing: border-box;
             }
-        `;
+/* Checkbox auto-siguiente individual en el modal de editar quiz */
+            /* Se dibuja el check a mano (appearance:none + ::after) para que el CSS del sitio
+               no lo deje invisible o sin checkmark al resetear la apariencia nativa. */
+            .zg-edit-auto-next-individual {
+                appearance: none !important;
+                -webkit-appearance: none !important;
+                -moz-appearance: none !important;
+                margin: 0 !important;
+                cursor: pointer !important;
+                width: 16px !important;
+                height: 16px !important;
+                border: 1px solid #b6c2cf !important;
+                border-radius: 3px !important;
+                background: #ffffff !important;
+                display: inline-block;
+                vertical-align: middle;
+                position: relative;
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+            .zg-edit-auto-next-individual:hover {
+                border-color: #7c3aed !important;
+            }
+            .zg-edit-auto-next-individual:checked {
+                background: #7c3aed !important;
+                border-color: #7c3aed !important;
+            }
+            .zg-edit-auto-next-individual:checked::after {
+                content: "";
+                position: absolute;
+                left: 5px;
+                top: 2px;
+                width: 4px;
+                height: 8px;
+                border: solid #ffffff;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            }
+            #zg-edit-classes input[name="classList"] {
+                appearance: none !important;
+                -webkit-appearance: none !important;
+                -moz-appearance: none !important;
+                margin: 0 !important;
+                cursor: pointer !important;
+                width: 16px !important;
+                height: 16px !important;
+                border: 1px solid #b6c2cf !important;
+                border-radius: 3px !important;
+                background: #ffffff !important;
+                display: inline-block;
+                vertical-align: middle;
+                position: relative;
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+            #zg-edit-classes input[name="classList"]:checked {
+                background: #7c3aed !important;
+                border-color: #7c3aed !important;
+            }
+            #zg-edit-classes input[name="classList"]:checked::after {
+                content: "";
+                position: absolute;
+                left: 5px;
+                top: 2px;
+                width: 4px;
+                height: 8px;
+                border: solid #ffffff;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            }
+         `;
         document.head.appendChild(style);
     }
     injectSharedStyles();
@@ -2731,20 +2803,23 @@
                 boxes.forEach(cb => { cb.checked = false; });
                 // Marcar la clase siguiente
                 const target = boxes.find(cb => cb.value === nextVal);
+                // SCROLL a la clase seleccionada - hacer scroll dentro del card
+                const cardElement = card.closest('.zg-bulk-quiz-card');
                 if (target) {
                     target.checked = true;
-                    // SCROLL a la clase seleccionada - hacer scroll dentro del card
-                    const cardElement = card.closest('.zg-bulk-quiz-card');
                     if (cardElement) {
-                        const targetEl = target.parentElement;
-                        if (targetEl) {
-                            // Scroll dentro del card, buscando el contenedor de clases
-                            const classesContainer = cardElement.querySelector('.zg-bulk-classes-box');
-                            if (classesContainer) {
-                                classesContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            } else {
-                                // Fallback: hacer scroll directo del elemento
-                                targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        const classesContainer = cardElement.querySelector('.zg-bulk-classes-box');
+                        const targetEl = target.parentElement || target;
+                        if (classesContainer && targetEl) {
+                            targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            const rect = targetEl.getBoundingClientRect();
+                            const containerRect = classesContainer.getBoundingClientRect();
+                            const offsetTop = rect.top - containerRect.top;
+                            if (offsetTop < 0 || offsetTop > containerRect.height) {
+                                classesContainer.scrollTo({
+                                    top: classesContainer.scrollTop + offsetTop - containerRect.height / 2 + rect.height / 2,
+                                    behavior: 'smooth'
+                                });
                             }
                         }
                     }
@@ -2819,17 +2894,36 @@
             rowsBox.addEventListener('change', updateAcceptLabel);
             updateAcceptLabel();
 
-            // Botón "Auto-sig. a todos" - DESMARCA TODAS las clases
+            // Botón "Auto-sig. a todos" - Toggle: aplicar/des-aplicar auto-siguiente a todos
             const autoNextAllBtn = modal.querySelector('#zg-bulk-auto-next-all');
             autoNextAllBtn.disabled = false;
             autoNextAllBtn.addEventListener('click', () => {
-                // DESMARCAR TODAS las casillas de clase en todos los quizzes
-                Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-class')).forEach(cb => {
-                    cb.checked = false;
-                });
-                // También desmarcar el checkbox auto-siguiente global
-                const globalAutoNext = modal.querySelector('#zg-bulk-auto-next-all');
-                if (globalAutoNext) globalAutoNext.checked = false;
+                const isActive = autoNextAllBtn.dataset.active === 'true';
+                if (!isActive) {
+                    // Aplicar auto-siguiente a TODOS los quizzes
+                    let appliedCount = 0;
+                    Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-card')).forEach(card => {
+                        if (card.applyAutoNext && card.applyAutoNext()) appliedCount++;
+                    });
+                    autoNextAllBtn.dataset.active = 'true';
+                    autoNextAllBtn.style.background = '#7c3aed';
+                    autoNextAllBtn.style.color = '#ffffff';
+                    autoNextAllBtn.style.borderColor = '#7c3aed';
+                    autoNextAllBtn.innerHTML = '✨ Auto-sig. activado (' + appliedCount + ')';
+                } else {
+                    // Desmarcar TODO: todas las casillas de clase y los checkboxes auto-siguiente de cada card
+                    Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-class')).forEach(cb => {
+                        cb.checked = false;
+                    });
+                    Array.from(rowsBox.querySelectorAll('.zg-bulk-auto-next')).forEach(cb => {
+                        cb.checked = false;
+                    });
+                    autoNextAllBtn.dataset.active = 'false';
+                    autoNextAllBtn.style.background = '';
+                    autoNextAllBtn.style.color = '#7c3aed';
+                    autoNextAllBtn.style.borderColor = '#c4b5fd';
+                    autoNextAllBtn.innerHTML = '✨ Auto-sig. a todos';
+                }
                 updateAcceptLabel();
             });
 
@@ -2985,7 +3079,7 @@
                     </div>
                 </div>
                 <div>
-                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Clases</label>
+                    <label for="zg-edit-classes" style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Clases</label>
                     <div id="zg-edit-classes" style="max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; background:#f8fafc;"></div>
                 </div>
             </div>
@@ -3038,151 +3132,97 @@
         dateInput.addEventListener('input', updateDateDisplay);
         dateInput.addEventListener('change', updateDateDisplay);
 
+        // Estado y feedback visual del checkbox Auto-siguiente (accesible desde todo el modal)
+        let autoNextChk = null;
+        let autoNextLabel = null;
+        const updateAutoNextVisual = () => {
+            if (!autoNextChk || !autoNextLabel) return;
+            const textEl = autoNextLabel.querySelector('.zg-auto-next-ind-text');
+            if (autoNextChk.checked) {
+                autoNextLabel.style.background = '#7c3aed';
+                autoNextLabel.style.color = '#ffffff';
+                autoNextLabel.style.borderRadius = '6px';
+                autoNextLabel.style.padding = '3px 8px';
+                if (textEl) textEl.textContent = '✔ Auto-siguiente activo';
+            } else {
+                autoNextLabel.style.background = '';
+                autoNextLabel.style.color = '';
+                autoNextLabel.style.borderRadius = '';
+                autoNextLabel.style.padding = '';
+                if (textEl) textEl.textContent = '✨ Auto-siguiente';
+            }
+        };
+
         classesBox.addEventListener('change', (e) => {
             if (e.target && e.target.type === 'checkbox') {
                 // Selección de UNA sola clase: marcar una desmarca las demás
                 if (e.target.checked) {
                     Array.from(classesBox.querySelectorAll('input[name="classList"]'))
                         .forEach(cb => { if (cb !== e.target) cb.checked = false; });
+                    // Al elegir una clase manualmente, apagar el Auto-siguiente (como en bulk)
+                    if (autoNextChk && autoNextChk.checked) {
+                        autoNextChk.checked = false;
+                        updateAutoNextVisual();
+                    }
                 }
                 applyEditClassGradeToName();
             }
         });
 
-        // Checkbox Auto-siguiente para la edición individual
-        const autoNextIndividualChk = document.createElement('input');
-        autoNextIndividualChk.type = 'checkbox';
-        autoNextIndividualChk.className = 'zg-edit-auto-next';
-        autoNextIndividualChk.style.cssText = 'margin:0; accent-color:#7c3aed; cursor:pointer;';
-        autoNextIndividualChk.title = "Marca automáticamente la clase siguiente a la que tiene el quiz";
-
-        // Insertar el checkbox auto-siguiente después del label de "Clases"
-        const classesLabel = modal.querySelector('label[for="zg-edit-classes"]') || modal.querySelector('label:contains("Clases")');
+        // Checkbox Auto-siguiente para la edición individual (después del label "Clases")
+        const classesLabel = modal.querySelector('label[for="zg-edit-classes"]');
         if (classesLabel) {
             const classesRow = classesLabel.parentElement;
             if (classesRow) {
                 const autoNextWrapper = document.createElement('div');
                 autoNextWrapper.style.cssText = 'display:flex; align-items:center; gap:6px; margin-top:4px; font-size:11px; color:#7c3aed; font-weight:600;';
-                // Usar un nombre de clase único para evitar conflictos: zg-edit-auto-next-individual
-                autoNextWrapper.innerHTML = `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" class="zg-edit-auto-next-individual" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />✨ Auto-siguiente</label>`;
+                autoNextWrapper.innerHTML = `<label class="zg-auto-next-ind-label" style="display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="zg-edit-auto-next-individual" style="margin:0; accent-color:#7c3aed; cursor:pointer;" /><span class="zg-auto-next-ind-text">✨ Auto-siguiente</span></label>`;
                 classesRow.parentNode.insertBefore(autoNextWrapper, classesRow.nextSibling);
-            }
-        }
 
-        // Manejar el checkbox Auto-siguiente en la edición individual
-        // Ejecutar después de un pequeño delay para asegurar que el DOM esté listo
-        setTimeout(() => {
-            const individualAutoNextChk = document.querySelector('.zg-edit-auto-next-individual');
-            if (individualAutoNextChk) {
-                individualAutoNextChk.addEventListener('change', () => {
-                    const classesBox = modal.querySelector('#zg-edit-classes');
-                    if (!classesBox) return;
-                    const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
-                    const quizNameInput = modal.querySelector('#zg-edit-name-input');
-                    const quizName = quizNameInput ? quizNameInput.value : '';
+                autoNextChk = autoNextWrapper.querySelector('.zg-edit-auto-next-individual');
+                autoNextLabel = autoNextWrapper.querySelector('.zg-auto-next-ind-label');
+                updateAutoNextVisual();
 
-                    if (individualAutoNextChk.checked) {
-                        // Desmarcar todas las clases
-                        boxes.forEach(cb => { cb.checked = false; });
-                        // Buscar el código de clase en el nombre del quiz
-                        const codeMatch = quizName.match(/\b(\d{3,4})\b/);
-                        if (codeMatch) {
-                            const currentCode = codeMatch[1];
-                            // Buscar esta clase en los boxes y marcar la siguiente
-                            const currentBox = boxes.find(cb => {
-                                const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
-                                return labelText.includes(currentCode) || cb.value === currentCode;
-                            });
-                            if (currentBox) {
-                                const currentIdx = boxes.indexOf(currentBox);
-                                if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
-                                    boxes[currentIdx + 1].checked = true;
-                                    // SCROLL a la clase seleccionada
-                                    if (classesBox) {
-                                        const target = currentBox.parentElement;
-                                        if (target) {
-                                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Si no hay código de clase en el nombre, marcar la primera clase
-                                if (boxes.length > 0) {
-                                    boxes[0].checked = true;
-                                    if (boxes[0]) {
-                                        boxes[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    }
-                                }
+                autoNextChk.addEventListener('change', () => {
+                    const classBox = modal.querySelector('#zg-edit-classes');
+                    if (!classBox) return;
+                    const boxes = Array.from(classBox.querySelectorAll('input[name="classList"]'));
+
+                    const scrollIntoClassBox = (el) => {
+                        if (!el) return;
+                        try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+                        const cRect = classBox.getBoundingClientRect();
+                        const eRect = el.getBoundingClientRect();
+                        const relTop = eRect.top - cRect.top + classBox.scrollTop;
+                        classBox.scrollTop = Math.max(0, relTop - classBox.clientHeight / 2 + eRect.height / 2);
+                    };
+
+                    if (autoNextChk.checked) {
+                        boxes.forEach(item => { item.checked = false; });
+                        const nextVal = getNextClassInRoster(nameInput.value, classItems);
+                        if (nextVal) {
+                            const target = boxes.find(cb => cb.value === nextVal);
+                            if (target) {
+                                target.checked = true;
+                                scrollIntoClassBox(target.parentElement || target);
                             }
+                        } else if (boxes.length > 0) {
+                            boxes[0].checked = true;
+                            scrollIntoClassBox(boxes[0].parentElement || boxes[0]);
                         }
+                    } else {
+                        boxes.forEach(item => { item.checked = false; });
                     }
+                    updateAutoNextVisual();
+                    applyEditClassGradeToName();
                 });
             }
-        }, 500);
-        
-        // Ejecutar el handler inmediatamente y también observador de DOM
-        individualAutoNextHandler();
-        const observer = new MutationObserver(individualAutoNextHandler);
-        observer.observe(modal, { childList: true, subtree: true });
+        }
 
         const cancelBtn = modal.querySelector('#zg-edit-cancel');
         const cleanup = () => overlay.remove();
         cancelBtn.addEventListener('click', cleanup);
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
-
-        // Manejar el checkbox Auto-siguiente en la edición individual
-        autoNextIndividualChk = modal.querySelector('.zg-edit-auto-next');
-        if (autoNextIndividualChk) {
-            autoNextIndividualChk.addEventListener('change', () => {
-                const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
-                const currentVal = null; // Se obtendrá del nombre del quiz
-
-                if (autoNextIndividualChk.checked) {
-                    // Desmarcar todas las clases
-                    boxes.forEach(cb => { cb.checked = false; });
-                    // Buscar la clase actual del quiz y marcar la siguiente
-                    const quizNameInput = modal.querySelector('#zg-edit-name-input');
-                    const quizName = quizNameInput ? quizNameInput.value : '';
-
-                    // Usar la función getNextClassInRoster si está disponible, o buscar en el roster
-                    // Por ahora, intentaremos extraer el código de clase del nombre
-                    const codeMatch = quizName.match(/\b(\d{3,4})\b/);
-                    if (codeMatch) {
-                        const currentCode = codeMatch[1];
-                        // Buscar esta clase en los boxes y marcar la siguiente
-                        const currentBox = boxes.find(cb => {
-                            const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : cb.value;
-                            return labelText.includes(currentCode) || cb.value === currentCode;
-                        });
-                        if (currentBox) {
-                            const currentIdx = boxes.indexOf(currentBox);
-                            if (currentIdx >= 0 && currentIdx < boxes.length - 1) {
-                                boxes[currentIdx + 1].checked = true;
-                                // SCROLL a la clase seleccionada
-                                const container = classesBox.parentElement;
-                                if (container) {
-                                    const target = currentBox.parentElement;
-                                    if (target) {
-                                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Si no hay código de clase en el nombre, marcar la primera clase
-                        if (boxes.length > 0) {
-                            boxes[0].checked = true;
-                            // SCROLL a la primera clase
-                            const firstBox = boxes[0];
-                            if (firstBox) {
-                                firstBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }
-                        }
-                    }
-                }
-                applyEditClassGradeToName();
-            });
-        }
 
         saveBtn.addEventListener('click', async () => {
             const nameVal = nameInput.value.trim();
@@ -3376,13 +3416,6 @@
             `;
             theadRow.appendChild(th);
 
-            // Columna de Estado por quiz (icón de descarga)
-            const statusTh = document.createElement('th');
-            statusTh.className = 'text-center zg-status-th sorting_disabled';
-            statusTh.style.cssText = 'vertical-align:middle; text-align:center; width:80px; color:#ffffff;';
-            statusTh.innerHTML = '<span style="font-family:\'Open Sans\', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Estado</span>';
-            theadRow.appendChild(statusTh);
-
             // Mismo título (tooltip) en el master NATIVO de ZipGrade (#selecctall) y su wrapper uniform
             const nativeMasterInput = document.querySelector('#selecctall');
             if (nativeMasterInput) {
@@ -3453,13 +3486,6 @@
 
             row.appendChild(td);
 
-            // NUEVA: Celda de estado de descarga para este quiz
-            const statusTd = document.createElement('td');
-            statusTd.className = 'zg-download-status-td';
-            statusTd.style.cssText = 'vertical-align:middle; text-align:center;';
-            statusTd.innerHTML = '<span style="font-size:12px; color:#64748b;;">—</span>'; // pending
-            row.appendChild(statusTd);
-
             // Cargar formatos del quiz de una vez
             loaders.push((async () => {
                 try {
@@ -3470,15 +3496,7 @@
                         xlsx: f.xlsx
                     })));
 
-                    // Actualizar estado de descarga
-                    if (statusTd) {
-                        if (formats.length === 0) {
-                            statusTd.innerHTML = '<span style="font-size:12px; color:#64748b;;">Sin formato</span>';
-                        } else {
-                            statusTd.innerHTML = '<span style="font-size:12px; color:#28a745;">✓ Listo</span>';
-                        }
-                    }
-
+                    // Múltiples formatos o ninguno
                     if (formats.length === 0) {
                         select.innerHTML = '<option value="">Sin formato</option>';
                         select.disabled = true;
@@ -3502,368 +3520,368 @@
                 }
             })());
 
-            const rowBtn = td.querySelector('.zg-btn-quiz-download');
-            rowBtn.addEventListener('click', async (e) => {
-                e.preventDefault();
+        const rowBtn = td.querySelector('.zg-btn-quiz-download');
+        rowBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
 
-                // Usar el formato elegido en el selector de la fila si es válido
-                if (td.dataset.formats && select.value !== '') {
-                    const formats = JSON.parse(td.dataset.formats);
-                    const chosen = formats[parseInt(select.value, 10)];
-                    if (chosen) {
-                        const originalHtml = rowBtn.innerHTML;
-                        rowBtn.disabled = true;
-                        rowBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
-                        try {
-                            const type = chosen.xlsx ? 'XLSX' : 'CSV';
-                            const filename = await downloadCustomExport(chosen, type, quizName);
-                            console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
-                        } catch (err) {
-                            console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
-                            alert(`No se pudo descargar los resultados: ${err.message}`);
-                        } finally {
-                            rowBtn.disabled = false;
-                            rowBtn.innerHTML = originalHtml;
-                        }
-                        return;
+            // Usar el formato elegido en el selector de la fila si es válido
+            if (td.dataset.formats && select.value !== '') {
+                const formats = JSON.parse(td.dataset.formats);
+                const chosen = formats[parseInt(select.value, 10)];
+                if (chosen) {
+                    const originalHtml = rowBtn.innerHTML;
+                    rowBtn.disabled = true;
+                    rowBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
+                    try {
+                        const type = chosen.xlsx ? 'XLSX' : 'CSV';
+                        const filename = await downloadCustomExport(chosen, type, quizName);
+                        console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
+                    } catch (err) {
+                        console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
+                        alert(`No se pudo descargar los resultados: ${err.message}`);
+                    } finally {
+                        rowBtn.disabled = false;
+                        rowBtn.innerHTML = originalHtml;
                     }
-                }
-
-                // Sin formato elegido: si el quiz no tiene o aún carga, avisar
-                if (td.dataset.formats && JSON.parse(td.dataset.formats).length === 0) {
-                    alert(`"${quizName}" no tiene un formato personalizado creado.`);
                     return;
                 }
-                await handleResultsDownloadClick(rowBtn, quizAllBaseUrl, true);
-            });
+            }
+
+            // Sin formato elegido: si el quiz no tiene o aún carga, avisar
+            if (td.dataset.formats && JSON.parse(td.dataset.formats).length === 0) {
+                alert(`"${quizName}" no tiene un formato personalizado creado.`);
+                return;
+            }
+            await handleResultsDownloadClick(rowBtn, quizAllBaseUrl, true);
         });
+    });
 
-        // La selección NATIVA (casillas de fila + master #selecctall de ZipGrade) mantiene
-        // sincronizados el contador y el master del toolkit. Se escucha a nivel documento
-        // para sobrevivir a los redibujos de DataTables.
-        if (!zgNativeSyncBound) {
-            zgNativeSyncBound = true;
-            document.addEventListener('change', (e) => {
-                if (!e.target || !e.target.matches) return;
-                const isNative = e.target.matches('#quizTable tbody input[name="quizList"]') ||
-                    e.target.matches('#uniform-selecctall input, #selecctall');
-                if (isNative) {
-                    setTimeout(() => updateQuizResultsCounter(), 0);
-                }
-            });
-        }
-
-        updateQuizResultsCounter();
-
-        // Promesa global de carga de formatos: la columna Estado espera por ella antes de
-        // descargar las páginas /all/ pesadas (así los selects llenan todos a la vez).
-        if (loaders.length > 0 && !zgFormatsLoadPromise) {
-            zgFormatsLoadPromise = Promise.allSettled(loaders);
-        }
-
-        // 3. Desactivar ordenación/búsqueda de DataTables en las columnas personalizadas
-        // (Estado, Descarga Rápida y Acciones) — centralizado en disableQuizCustomColumnsSort().
-        disableQuizCustomColumnsSort();
-
+    // La selección NATIVA (casillas de fila + master #selecctall de ZipGrade) mantiene
+    // sincronizados el contador y el master del toolkit. Se escucha a nivel documento
+    // para sobrevivir a los redibujos de DataTables.
+    if (!zgNativeSyncBound) {
+        zgNativeSyncBound = true;
+        document.addEventListener('change', (e) => {
+            if (!e.target || !e.target.matches) return;
+            const isNative = e.target.matches('#quizTable tbody input[name="quizList"]') ||
+                e.target.matches('#uniform-selecctall input, #selecctall');
+            if (isNative) {
+                setTimeout(() => updateQuizResultsCounter(), 0);
+            }
+        });
     }
+
+    updateQuizResultsCounter();
+
+    // Promesa global de carga de formatos: la columna Estado espera por ella antes de
+    // descargar las páginas /all/ pesadas (así los selects llenan todos a la vez).
+    if (loaders.length > 0 && !zgFormatsLoadPromise) {
+        zgFormatsLoadPromise = Promise.allSettled(loaders);
+    }
+
+    // 3. Desactivar ordenación/búsqueda de DataTables en las columnas personalizadas
+    // (Estado, Descarga Rápida y Acciones) — centralizado en disableQuizCustomColumnsSort().
+    disableQuizCustomColumnsSort();
+
+}
 
     // Helpers de UI del card de /quizzes/
     function updateQuizStatusText(msg) {
-        const el = document.getElementById('zg-quiz-status-text');
-        if (el) el.innerText = msg;
+    const el = document.getElementById('zg-quiz-status-text');
+    if (el) el.innerText = msg;
+}
+
+function setQuizProgressBar(percent, title = "Procesando...") {
+    const container = document.getElementById('zg-quiz-progress-container');
+    const titleEl = document.getElementById('zg-quiz-progress-title');
+    const percentEl = document.getElementById('zg-quiz-progress-percent');
+    const barEl = document.getElementById('zg-quiz-progress-bar');
+    if (container && titleEl && percentEl && barEl) {
+        container.style.display = 'flex';
+        titleEl.innerText = title;
+        percentEl.innerText = `${Math.round(percent)}%`;
+        barEl.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    }
+}
+
+function hideQuizProgressBar() {
+    const container = document.getElementById('zg-quiz-progress-container');
+    if (container) container.style.display = 'none';
+}
+
+// Localiza la celda de "Descarga Rápida" de una fila a partir de la URL del quiz.
+function getQuizTd(quizAllBaseUrl) {
+    const link = document.querySelector(`#quizTable tbody a[href="${quizAllBaseUrl}"]`);
+    const row = link ? link.closest('tr') : null;
+    return row ? row.querySelector('.zg-quiz-td') : null;
+}
+
+// Espera interrumpible: permite detener la descarga masiva incluso durante las
+// pausas anti rate-limit. Devuelve false si el usuario pidió cancelar.
+async function sleepWithCancel(ms) {
+    const step = 200;
+    for (let t = 0; t < ms; t += step) {
+        if (zgQuizDownloadCancelRequested) return false;
+        await new Promise(r => setTimeout(r, Math.min(step, ms - t)));
+    }
+    return !zgQuizDownloadCancelRequested;
+}
+
+// Descarga masiva de resultados para los quizzes marcados en /quizzes/
+async function downloadSelectedQuizResults(bulkBtn) {
+    const quizzes = getSelectedQuizzes();
+    if (quizzes.length === 0) {
+        alert('Marca al menos un quiz usando las casillas de la tabla (primera columna).');
+        return;
     }
 
-    function setQuizProgressBar(percent, title = "Procesando...") {
-        const container = document.getElementById('zg-quiz-progress-container');
-        const titleEl = document.getElementById('zg-quiz-progress-title');
-        const percentEl = document.getElementById('zg-quiz-progress-percent');
-        const barEl = document.getElementById('zg-quiz-progress-bar');
-        if (container && titleEl && percentEl && barEl) {
-            container.style.display = 'flex';
-            titleEl.innerText = title;
-            percentEl.innerText = `${Math.round(percent)}%`;
-            barEl.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-        }
+    const bannerEl = document.getElementById('zg-quiz-download-banner');
+    if (bannerEl) bannerEl.style.display = 'none';
+
+    // Botón "Detener": muestra el progreso y cancela el lote entre quizzes
+    const stopBtn = document.getElementById('zg-quiz-btn-stop');
+    if (stopBtn && !stopBtn.dataset.zgBound) {
+        stopBtn.dataset.zgBound = 'true';
+        stopBtn.addEventListener('click', () => {
+            zgQuizDownloadCancelRequested = true;
+            updateQuizStatusText('Deteniendo el lote tras el quiz en curso...');
+        });
     }
+    zgQuizDownloadCancelRequested = false;
+    if (stopBtn) stopBtn.style.display = 'inline-flex';
 
-    function hideQuizProgressBar() {
-        const container = document.getElementById('zg-quiz-progress-container');
-        if (container) container.style.display = 'none';
-    }
+    const originalHtml = bulkBtn.innerHTML;
+    bulkBtn.disabled = true;
+    const startTime = Date.now();
 
-    // Localiza la celda de "Descarga Rápida" de una fila a partir de la URL del quiz.
-    function getQuizTd(quizAllBaseUrl) {
-        const link = document.querySelector(`#quizTable tbody a[href="${quizAllBaseUrl}"]`);
-        const row = link ? link.closest('tr') : null;
-        return row ? row.querySelector('.zg-quiz-td') : null;
-    }
+    let successCount = 0;
+    let skipCount = 0;
+    let stopped = false;
+    for (let i = 0; i < quizzes.length; i++) {
+        if (zgQuizDownloadCancelRequested) { stopped = true; break; }
 
-    // Espera interrumpible: permite detener la descarga masiva incluso durante las
-    // pausas anti rate-limit. Devuelve false si el usuario pidió cancelar.
-    async function sleepWithCancel(ms) {
-        const step = 200;
-        for (let t = 0; t < ms; t += step) {
-            if (zgQuizDownloadCancelRequested) return false;
-            await new Promise(r => setTimeout(r, Math.min(step, ms - t)));
-        }
-        return !zgQuizDownloadCancelRequested;
-    }
+        const quiz = quizzes[i];
+        const quizUrl = quiz.quizAllBaseUrl;
+        const quizName = quiz.quizName;
+        const progressPercent = (i / quizzes.length) * 90;
 
-    // Descarga masiva de resultados para los quizzes marcados en /quizzes/
-    async function downloadSelectedQuizResults(bulkBtn) {
-        const quizzes = getSelectedQuizzes();
-        if (quizzes.length === 0) {
-            alert('Marca al menos un quiz usando las casillas de la tabla (primera columna).');
-            return;
-        }
+        setQuizProgressBar(progressPercent, `Descargando ${i + 1}/${quizzes.length}: ${quizName}`);
+        updateQuizStatusText(`Descargando ${i + 1}/${quizzes.length}: ${quizName}...`);
+        bulkBtn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> ${i + 1}/${quizzes.length}`;
 
-        const bannerEl = document.getElementById('zg-quiz-download-banner');
-        if (bannerEl) bannerEl.style.display = 'none';
+        try {
+            // Si la fila tiene un formato elegido en su selector, usarlo; si no, el primero
+            const td = getQuizTd(quizUrl);
+            const rowSelect = td ? td.querySelector('.zg-quiz-format-select') : null;
+            let fmt = null;
 
-        // Botón "Detener": muestra el progreso y cancela el lote entre quizzes
-        const stopBtn = document.getElementById('zg-quiz-btn-stop');
-        if (stopBtn && !stopBtn.dataset.zgBound) {
-            stopBtn.dataset.zgBound = 'true';
-            stopBtn.addEventListener('click', () => {
-                zgQuizDownloadCancelRequested = true;
-                updateQuizStatusText('Deteniendo el lote tras el quiz en curso...');
-            });
-        }
-        zgQuizDownloadCancelRequested = false;
-        if (stopBtn) stopBtn.style.display = 'inline-flex';
+            if (rowSelect && td.dataset.formats && rowSelect.value !== '') {
+                const cached = JSON.parse(td.dataset.formats);
+                fmt = cached[parseInt(rowSelect.value, 10)];
+            }
 
-        const originalHtml = bulkBtn.innerHTML;
-        bulkBtn.disabled = true;
-        const startTime = Date.now();
-
-        let successCount = 0;
-        let skipCount = 0;
-        let stopped = false;
-        for (let i = 0; i < quizzes.length; i++) {
-            if (zgQuizDownloadCancelRequested) { stopped = true; break; }
-
-            const quiz = quizzes[i];
-            const quizUrl = quiz.quizAllBaseUrl;
-            const quizName = quiz.quizName;
-            const progressPercent = (i / quizzes.length) * 90;
-
-            setQuizProgressBar(progressPercent, `Descargando ${i + 1}/${quizzes.length}: ${quizName}`);
-            updateQuizStatusText(`Descargando ${i + 1}/${quizzes.length}: ${quizName}...`);
-            bulkBtn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> ${i + 1}/${quizzes.length}`;
-
-            try {
-                // Si la fila tiene un formato elegido en su selector, usarlo; si no, el primero
-                const td = getQuizTd(quizUrl);
-                const rowSelect = td ? td.querySelector('.zg-quiz-format-select') : null;
-                let fmt = null;
-
-                if (rowSelect && td.dataset.formats && rowSelect.value !== '') {
-                    const cached = JSON.parse(td.dataset.formats);
-                    fmt = cached[parseInt(rowSelect.value, 10)];
+            if (!fmt) {
+                const formats = await fetchCustomExportFormats(quizUrl);
+                if (formats.length === 0) {
+                    console.warn(`⚠️ [ZipGrade] "${quizName}" no tiene formatos personalizados. Omitido.`);
+                    skipCount++;
+                    continue;
                 }
-
-                if (!fmt) {
-                    const formats = await fetchCustomExportFormats(quizUrl);
-                    if (formats.length === 0) {
-                        console.warn(`⚠️ [ZipGrade] "${quizName}" no tiene formatos personalizados. Omitido.`);
-                        skipCount++;
-                        continue;
-                    }
-                    fmt = formats[0];
-                }
-
-                const type = fmt.xlsx ? 'XLSX' : 'CSV';
-                const filename = await downloadCustomExport(fmt, type, quizName);
-                console.log(`📥 [ZipGrade] ${i + 1}/${quizzes.length} descargado: ${filename}`);
-                successCount++;
-                if (!(await sleepWithCancel(2000))) { stopped = true; break; }
-            } catch (err) {
-                console.error(`❌ [ZipGrade] Error descargando "${quizName}":`, err);
-                skipCount++;
+                fmt = formats[0];
             }
-            // Pausa anti rate-limit entre quizzes (interrumpible)
-            if (i < quizzes.length - 1 && !(await sleepWithCancel(3000))) {
-                stopped = true;
-                break;
-            }
+
+            const type = fmt.xlsx ? 'XLSX' : 'CSV';
+            const filename = await downloadCustomExport(fmt, type, quizName);
+            console.log(`📥 [ZipGrade] ${i + 1}/${quizzes.length} descargado: ${filename}`);
+            successCount++;
+            if (!(await sleepWithCancel(2000))) { stopped = true; break; }
+        } catch (err) {
+            console.error(`❌ [ZipGrade] Error descargando "${quizName}":`, err);
+            skipCount++;
         }
-
-        bulkBtn.innerHTML = originalHtml;
-        bulkBtn.disabled = false;
-        if (stopBtn) stopBtn.style.display = 'none';
-        hideQuizProgressBar();
-
-        const totalTime = Math.round((Date.now() - startTime) / 1000);
-        const minutes = Math.floor(totalTime / 60);
-        const secs = totalTime % 60;
-        const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
-        const base = stopped
-            ? `Descarga detenida: ${successCount} de ${quizzes.length} descargados en ${timeStr}`
-            : `${successCount} de ${quizzes.length} resultados descargados en ${timeStr}`;
-        const summary = base + (skipCount > 0 ? ` (${skipCount} omitidos)` : '');
-        console.log(`🎉 [ZipGrade] ${summary}`);
-        updateQuizStatusText(summary);
-
-        if (successCount > 0) {
-            const bannerTitle = document.getElementById('zg-quiz-banner-title');
-            const bannerSub = document.getElementById('zg-quiz-banner-subtitle');
-            if (bannerTitle) bannerTitle.textContent = summary;
-            if (bannerSub) {
-                bannerSub.textContent = stopped
-                    ? 'El lote se detuvo a petición tuya.'
-                    : (skipCount > 0
-                        ? `${skipCount} quiz(zes) se omitieron por no tener formato personalizado.`
-                        : 'Los resultados se han descargado a tu carpeta de descargas.');
-            }
-            if (bannerEl) bannerEl.style.display = 'flex';
-        } else if (!stopped) {
-            alert('No se pudo descargar ningún resultado. Verifica que los quizzes tengan un Export Format personalizado.');
+        // Pausa anti rate-limit entre quizzes (interrumpible)
+        if (i < quizzes.length - 1 && !(await sleepWithCancel(3000))) {
+            stopped = true;
+            break;
         }
     }
 
-    function initQuizzesPage() {
+    bulkBtn.innerHTML = originalHtml;
+    bulkBtn.disabled = false;
+    if (stopBtn) stopBtn.style.display = 'none';
+    hideQuizProgressBar();
+
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
+    const minutes = Math.floor(totalTime / 60);
+    const secs = totalTime % 60;
+    const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+    const base = stopped
+        ? `Descarga detenida: ${successCount} de ${quizzes.length} descargados en ${timeStr}`
+        : `${successCount} de ${quizzes.length} resultados descargados en ${timeStr}`;
+    const summary = base + (skipCount > 0 ? ` (${skipCount} omitidos)` : '');
+    console.log(`🎉 [ZipGrade] ${summary}`);
+    updateQuizStatusText(summary);
+
+    if (successCount > 0) {
+        const bannerTitle = document.getElementById('zg-quiz-banner-title');
+        const bannerSub = document.getElementById('zg-quiz-banner-subtitle');
+        if (bannerTitle) bannerTitle.textContent = summary;
+        if (bannerSub) {
+            bannerSub.textContent = stopped
+                ? 'El lote se detuvo a petición tuya.'
+                : (skipCount > 0
+                    ? `${skipCount} quiz(zes) se omitieron por no tener formato personalizado.`
+                    : 'Los resultados se han descargado a tu carpeta de descargas.');
+        }
+        if (bannerEl) bannerEl.style.display = 'flex';
+    } else if (!stopped) {
+        alert('No se pudo descargar ningún resultado. Verifica que los quizzes tengan un Export Format personalizado.');
+    }
+}
+
+function initQuizzesPage() {
+    translateQuizHeaders();
+    createQuizzesSortControls();
+    sortQuizTable();
+    initQuizzesResultsColumn();
+    const statusLoadPromise = initQuizStatusColumn();
+    initQuizKeyColumn();
+    initQuizActionsColumn();
+    setupQuizStatusRefreshButton();
+
+    // Precargar la lista de clases (caché 24 h) una vez que terminen los estados de la tabla,
+    // para que el primer modal de copiar/editar no tenga que descargar la página /edit/.
+    const firstQuizLink = document.querySelector('#quizTable tbody tr a[href*="/quiz/"][href*="/all/"]');
+    if (firstQuizLink && statusLoadPromise) {
+        const firstQuizAllBaseUrl = new URL(firstQuizLink.getAttribute('href'), window.location.origin).pathname;
+        statusLoadPromise.then(() => warmQuizClassListCache(firstQuizAllBaseUrl));
+    }
+
+    setTimeout(() => {
         translateQuizHeaders();
         createQuizzesSortControls();
         sortQuizTable();
         initQuizzesResultsColumn();
-        const statusLoadPromise = initQuizStatusColumn();
+        initQuizStatusColumn();
         initQuizKeyColumn();
         initQuizActionsColumn();
-        setupQuizStatusRefreshButton();
+    }, 400);
+    setTimeout(() => {
+        translateQuizHeaders();
+        createQuizzesSortControls();
+        sortQuizTable();
+        initQuizzesResultsColumn();
+        initQuizStatusColumn();
+        initQuizKeyColumn();
+        initQuizActionsColumn();
+    }, 1000);
 
-        // Precargar la lista de clases (caché 24 h) una vez que terminen los estados de la tabla,
-        // para que el primer modal de copiar/editar no tenga que descargar la página /edit/.
-        const firstQuizLink = document.querySelector('#quizTable tbody tr a[href*="/quiz/"][href*="/all/"]');
-        if (firstQuizLink && statusLoadPromise) {
-            const firstQuizAllBaseUrl = new URL(firstQuizLink.getAttribute('href'), window.location.origin).pathname;
-            statusLoadPromise.then(() => warmQuizClassListCache(firstQuizAllBaseUrl));
-        }
-
-        setTimeout(() => {
-            translateQuizHeaders();
-            createQuizzesSortControls();
-            sortQuizTable();
-            initQuizzesResultsColumn();
-            initQuizStatusColumn();
-            initQuizKeyColumn();
-            initQuizActionsColumn();
-        }, 400);
-        setTimeout(() => {
-            translateQuizHeaders();
-            createQuizzesSortControls();
-            sortQuizTable();
-            initQuizzesResultsColumn();
-            initQuizStatusColumn();
-            initQuizKeyColumn();
-            initQuizActionsColumn();
-        }, 1000);
-
-        // Re-insertar las columnas personalizadas si DataTables redibuja la tabla (ordenar, filtrar, paginar)
-        const tbody = document.querySelector('#quizTable tbody');
-        if (tbody && !window._zgQuizTableObserver) {
-            let reinsertTimer = null;
-            window._zgQuizTableObserver = new MutationObserver(() => {
-                if (reinsertTimer) clearTimeout(reinsertTimer);
-                reinsertTimer = setTimeout(() => {
-                    translateQuizHeaders();
-                    initQuizzesResultsColumn();
-                    initQuizStatusColumn();
-                    initQuizKeyColumn();
-                    initQuizActionsColumn();
-                    disableQuizCustomColumnsSort();
-                }, 150);
-            });
-            window._zgQuizTableObserver.observe(tbody, { childList: true });
-        }
+    // Re-insertar las columnas personalizadas si DataTables redibuja la tabla (ordenar, filtrar, paginar)
+    const tbody = document.querySelector('#quizTable tbody');
+    if (tbody && !window._zgQuizTableObserver) {
+        let reinsertTimer = null;
+        window._zgQuizTableObserver = new MutationObserver(() => {
+            if (reinsertTimer) clearTimeout(reinsertTimer);
+            reinsertTimer = setTimeout(() => {
+                translateQuizHeaders();
+                initQuizzesResultsColumn();
+                initQuizStatusColumn();
+                initQuizKeyColumn();
+                initQuizActionsColumn();
+                disableQuizCustomColumnsSort();
+            }, 150);
+        });
+        window._zgQuizTableObserver.observe(tbody, { childList: true });
     }
+}
 
-    // ==========================================
-    // 6.3. ORDENAR CLASES ACADÉMICAMENTE EN CREACIÓN/EDICIÓN DE QUIZ
-    // ==========================================
-    // Identifica rangos de grados (ej: "1° - 2°", "10° - 11°")
-    function isClassRange(text) {
-        const degreeCount = (text.match(/[°ºª]/g) || []).length;
-        if (degreeCount >= 2) return true;
-        if (text.includes(' - ') && text.includes('°')) return true;
-        return false;
-    }
+// ==========================================
+// 6.3. ORDENAR CLASES ACADÉMICAMENTE EN CREACIÓN/EDICIÓN DE QUIZ
+// ==========================================
+// Identifica rangos de grados (ej: "1° - 2°", "10° - 11°")
+function isClassRange(text) {
+    const degreeCount = (text.match(/[°ºª]/g) || []).length;
+    if (degreeCount >= 2) return true;
+    if (text.includes(' - ') && text.includes('°')) return true;
+    return false;
+}
 
-    // Comparador académico de etiquetas de clase:
-    // individuos primero, luego rangos (ej: "1° - 2°"), y Sandbox/Teachers al final
-    function compareClassLabels(textA, textB) {
-        const a = (textA || '').trim();
-        const b = (textB || '').trim();
+// Comparador académico de etiquetas de clase:
+// individuos primero, luego rangos (ej: "1° - 2°"), y Sandbox/Teachers al final
+function compareClassLabels(textA, textB) {
+    const a = (textA || '').trim();
+    const b = (textB || '').trim();
 
-        // 1. Sandbox y Teachers al final del todo
-        const isNonAcadA = a.toLowerCase().includes('sandbox') || a.toLowerCase().includes('teacher');
-        const isNonAcadB = b.toLowerCase().includes('sandbox') || b.toLowerCase().includes('teacher');
-        if (isNonAcadA && !isNonAcadB) return 1;
-        if (!isNonAcadA && isNonAcadB) return -1;
-        if (isNonAcadA && isNonAcadB) {
-            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-        }
-
-        // 2. Rangos de grados (ej: "1° - 2°") agrupados después de clases individuales, pero antes de Sandbox/Teachers
-        const isRangeA = isClassRange(a);
-        const isRangeB = isClassRange(b);
-        if (isRangeA && !isRangeB) return 1;
-        if (!isRangeA && isRangeB) return -1;
-
-        // 3. Ambos son rangos o ambos son individuales: ordenar por peso y luego por nombre
-        const weightA = extractGradeWeight(a);
-        const weightB = extractGradeWeight(b);
-        if (weightA !== weightB) return weightA - weightB;
-
+    // 1. Sandbox y Teachers al final del todo
+    const isNonAcadA = a.toLowerCase().includes('sandbox') || a.toLowerCase().includes('teacher');
+    const isNonAcadB = b.toLowerCase().includes('sandbox') || b.toLowerCase().includes('teacher');
+    if (isNonAcadA && !isNonAcadB) return 1;
+    if (!isNonAcadA && isNonAcadB) return -1;
+    if (isNonAcadA && isNonAcadB) {
         return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
     }
 
-    function sortQuizEditClasses() {
-        const classListUl = document.getElementById('classList');
-        if (!classListUl) return;
+    // 2. Rangos de grados (ej: "1° - 2°") agrupados después de clases individuales, pero antes de Sandbox/Teachers
+    const isRangeA = isClassRange(a);
+    const isRangeB = isClassRange(b);
+    if (isRangeA && !isRangeB) return 1;
+    if (!isRangeA && isRangeB) return -1;
 
-        const items = Array.from(classListUl.querySelectorAll('li'));
-        if (items.length <= 1) return;
+    // 3. Ambos son rangos o ambos son individuales: ordenar por peso y luego por nombre
+    const weightA = extractGradeWeight(a);
+    const weightB = extractGradeWeight(b);
+    if (weightA !== weightB) return weightA - weightB;
 
-        items.sort((a, b) => {
-            const labelA = a.querySelector('label');
-            const labelB = b.querySelector('label');
-            const textA = labelA ? labelA.innerText.trim() : '';
-            const textB = labelB ? labelB.innerText.trim() : '';
-            return compareClassLabels(textA, textB);
-        });
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
 
-        // Re-apend en el orden correcto
-        items.forEach(li => classListUl.appendChild(li));
-        console.log(`✅ [ZipGrade] ${items.length} clases ordenadas académicamente (con rangos agrupados al final).`);
+function sortQuizEditClasses() {
+    const classListUl = document.getElementById('classList');
+    if (!classListUl) return;
+
+    const items = Array.from(classListUl.querySelectorAll('li'));
+    if (items.length <= 1) return;
+
+    items.sort((a, b) => {
+        const labelA = a.querySelector('label');
+        const labelB = b.querySelector('label');
+        const textA = labelA ? labelA.innerText.trim() : '';
+        const textB = labelB ? labelB.innerText.trim() : '';
+        return compareClassLabels(textA, textB);
+    });
+
+    // Re-apend en el orden correcto
+    items.forEach(li => classListUl.appendChild(li));
+    console.log(`✅ [ZipGrade] ${items.length} clases ordenadas académicamente (con rangos agrupados al final).`);
+}
+
+// ==========================================
+// 6.4. FORMATEAR SELECTOR DE FECHA EN CREACIÓN/EDICIÓN DE QUIZ
+// ==========================================
+function initQuizEditPage() {
+    // Ordenar la lista de checkboxes de cursos
+    sortQuizEditClasses();
+
+    // Corregir formato antiguo de nombre de quiz si aplica
+    const quizNameInput = document.getElementById('quizName');
+    if (quizNameInput) {
+        quizNameInput.value = adjustQuizNameFormat(quizNameInput.value);
     }
 
-    // ==========================================
-    // 6.4. FORMATEAR SELECTOR DE FECHA EN CREACIÓN/EDICIÓN DE QUIZ
-    // ==========================================
-    function initQuizEditPage() {
-        // Ordenar la lista de checkboxes de cursos
-        sortQuizEditClasses();
+    const quizDateInput = document.getElementById('quizDate');
+    if (!quizDateInput || document.getElementById('zg-quiz-date-display-text')) return;
 
-        // Corregir formato antiguo de nombre de quiz si aplica
-        const quizNameInput = document.getElementById('quizName');
-        if (quizNameInput) {
-            quizNameInput.value = adjustQuizNameFormat(quizNameInput.value);
-        }
+    console.log("⚙️ [ZipGrade] Inicializando formateador de fecha en la página de edición de Quiz...");
 
-        const quizDateInput = document.getElementById('quizDate');
-        if (!quizDateInput || document.getElementById('zg-quiz-date-display-text')) return;
+    // 1. Crear contenedor
+    const wrapper = document.createElement('div');
+    wrapper.id = 'zg-quiz-date-wrapper';
+    wrapper.style.cssText = 'position: relative; width: 100%; height: 34px;';
 
-        console.log("⚙️ [ZipGrade] Inicializando formateador de fecha en la página de edición de Quiz...");
-
-        // 1. Crear contenedor
-        const wrapper = document.createElement('div');
-        wrapper.id = 'zg-quiz-date-wrapper';
-        wrapper.style.cssText = 'position: relative; width: 100%; height: 34px;';
-
-        // 2. Crear elemento de visualización
-        const displayEl = document.createElement('div');
-        displayEl.className = 'form-control';
-        displayEl.style.cssText = `
+    // 2. Crear elemento de visualización
+    const displayEl = document.createElement('div');
+    displayEl.className = 'form-control';
+    displayEl.style.cssText = `
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -3878,22 +3896,22 @@
             box-sizing: border-box;
         `;
 
-        const textSpan = document.createElement('span');
-        textSpan.id = 'zg-quiz-date-display-text';
-        displayEl.appendChild(textSpan);
+    const textSpan = document.createElement('span');
+    textSpan.id = 'zg-quiz-date-display-text';
+    displayEl.appendChild(textSpan);
 
-        const icon = document.createElement('i');
-        icon.className = 'fa fa-calendar';
-        icon.style.cssText = 'color: #94a3b8; font-size: 14px;';
-        displayEl.appendChild(icon);
+    const icon = document.createElement('i');
+    icon.className = 'fa fa-calendar';
+    icon.style.cssText = 'color: #94a3b8; font-size: 14px;';
+    displayEl.appendChild(icon);
 
-        // 3. Colocar en el DOM
-        quizDateInput.parentNode.insertBefore(wrapper, quizDateInput);
-        wrapper.appendChild(displayEl);
-        wrapper.appendChild(quizDateInput);
+    // 3. Colocar en el DOM
+    quizDateInput.parentNode.insertBefore(wrapper, quizDateInput);
+    wrapper.appendChild(displayEl);
+    wrapper.appendChild(quizDateInput);
 
-        // 4. Estilar el input original para que sea transparente y esté encima
-        quizDateInput.style.cssText = `
+    // 4. Estilar el input original para que sea transparente y esté encima
+    quizDateInput.style.cssText = `
             position: absolute;
             top: 0;
             left: 0;
@@ -3907,368 +3925,368 @@
             border: none;
         `;
 
-        // 5. Función de actualización de texto
-        function updateDisplay() {
-            const rawVal = quizDateInput.value;
-            if (rawVal) {
-                textSpan.innerText = formatQuizDate(rawVal);
-            } else {
-                textSpan.innerText = '';
-            }
-        }
-
-        // 6. Escuchar cambios
-        quizDateInput.addEventListener('input', updateDisplay);
-        quizDateInput.addEventListener('change', updateDisplay);
-
-        // Actualizar el valor inicial
-        updateDisplay();
-    }
-
-    // Helper para formatear nombres de quiz antiguos al nuevo formato "Template E.S.A. | Class | Period | Session"
-    function adjustQuizNameFormat(nameVal) {
-        if (!nameVal) return nameVal;
-
-        let cleanVal = nameVal.trim();
-        let suffix = '';
-        if (cleanVal.toLowerCase().endsWith(' copy')) {
-            cleanVal = cleanVal.substring(0, cleanVal.length - 5).trim();
-            suffix = ' copy';
-        }
-
-        const parts = cleanVal.split('|').map(p => p.trim());
-        if (parts.length >= 4 && parts[0] === 'Template E.S.A.') {
-            const sessVal = parts[1];
-            // Si el segundo elemento tiene formato de sesión (ej: S1, S2, S10), es el formato viejo
-            if (/^S\d+$/i.test(sessVal)) {
-                const prefix = parts[0];
-                const session = parts[1];
-                const period = parts[2];
-                const classVal = parts[3];
-                return `${prefix} | ${classVal} | ${period} | ${session}${suffix}`;
-            }
-        }
-        return nameVal;
-    }
-
-    // ¿Un segmento del nombre es un token de grado (individual "3°" o rango "3° - 5°"/"3° a 5°")?
-    function isGradeToken(p) {
-        if (!p) return false;
-        if (/^(S\d+|P\d+)$/i.test(p)) return false;
-        if (/^\d{1,2}\s*[º°ª]?[A-Za-z]?$/.test(p)) return true;
-        return /^\d{1,2}\s*[º°ª]?[A-Za-z]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?$/i.test(p);
-    }
-
-    // ¿Un segmento del nombre es un código de clase tipo "601" o "1002"?
-    function isClassCodeToken(p) {
-        if (!p) return false;
-        const m = String(p).match(/^\d{3,4}$/);
-        if (!m) return false;
-        const v = parseInt(m[0], 10);
-        return v >= 600 && v <= 1200;
-    }
-
-    // Índice del token que representa la clase dentro del nombre
-    // (grado individual "3°", rango "6° - 9°" o código "601")
-    function findQuizClassTokenIdx(parts) {
-        const gradeIdx = parts.findIndex(isGradeToken);
-        if (gradeIdx !== -1) return gradeIdx;
-        return parts.findIndex(isClassCodeToken);
-    }
-
-    // Actualiza el grado (ej: "4°") dentro del nombre de un quiz con formato "... | 3° | P3 | S1".
-    // Reemplaza el token de grado (individual o rango) donde esté; si no hay, lo agrega al final.
-    // Al aplicar un grado nuevo también quita el sufijo " copy" (el nombre ya pasa a ser distinto)
-    // y elimina duplicados del grado (ej: "... copy | 4°").
-    function updateQuizNameGrade(nameVal, gradeVal) {
-        if (!nameVal) return nameVal;
-        const grade = String(gradeVal || '').trim();
-        const parts = String(nameVal).split('|').map(p => p.trim());
-        const classIdx = findQuizClassTokenIdx(parts);
-        const hadClass = classIdx !== -1;
-        const cleanParts = parts.filter((p, i) => i !== classIdx);
-        if (hadClass) {
-            cleanParts.splice(classIdx, 0, grade || parts[classIdx]);
-        } else if (grade) {
-            cleanParts.push(grade);
-        }
-        let result = cleanParts.join(' | ');
-        if (grade) result = result.replace(/\s*copy(?:\s*\d+)?$/i, '');
-        return result;
-    }
-
-    // Extrae el token de grado del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°")
-    function extractGradeFromQuizName(nameVal) {
-        if (!nameVal) return '';
-        const parts = String(nameVal).split('|').map(p => p.trim());
-        const idx = parts.findIndex(isGradeToken);
-        return idx !== -1 ? parts[idx] : '';
-    }
-
-    // Grado de una clase según su etiqueta (ej: "3°" -> "3°", "6-1" -> "6-1", "1° - 2°" -> "1° - 2°")
-    function extractGradeFromClassLabel(text) {
-        const clean = String(text || '').trim();
-        if (!clean) return '';
-        if (isGradeToken(clean)) return clean;
-        const range = clean.match(/\d{1,2}\s*[º°ª]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?/);
-        if (range && !/^(S\d+|P\d+)$/i.test(range[0])) return range[0];
-        const deg = clean.match(/\d{1,2}[º°ª]/);
-        if (deg) return deg[0];
-        // Códigos tipo "601" (grado 6, sección 01) o "1002" (grado 10, sección 02)
-        const codeMatch = clean.match(/\b(\d{3,4})\b/);
-        if (codeMatch) {
-            const val = parseInt(codeMatch[1], 10);
-            if (val >= 600 && val <= 1200) {
-                const grade = Math.floor(val / 100);
-                return grade + '°';
-            }
-        }
-        const num = clean.match(/^\d{1,2}(?:-\d{1,2})?/);
-        if (num) return num[0];
-        return '';
-    }
-
-    // Marca en la lista de clases (checkbox) la PRIMERA clase cuyo grado coincida con gradeVal
-    // y desmarca todas las demás (selección de UNA sola clase).
-    function syncClassFromGrade(classesBox, gradeVal) {
-        const g = String(gradeVal || '').trim();
-        if (!g || !classesBox) return;
-        const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
-        const match = boxes.find(cb => {
-            const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : '';
-            return extractGradeFromClassLabel(labelText) === g;
-        });
-        if (match) {
-            boxes.forEach(cb => { cb.checked = (cb === match); });
-        }
-    }
-
-    // Helper para convertir "September 15, 2026" o "Miércoles 16/SEP/2026" a "2026-09-15"
-    function parseEnglishDate(dateStr) {
-        if (!dateStr) return null;
-        const months = {
-            january: '01', february: '02', march: '03', april: '04',
-            may: '05', june: '06', july: '07', august: '08',
-            september: '09', october: '10', november: '11', december: '12'
-        };
-        const spanishMonths = {
-            ene: '01', feb: '02', mar: '03', abr: '04',
-            may: '05', jun: '06', jul: '07', ago: '08',
-            sep: '09', oct: '10', nov: '11', dic: '12'
-        };
-
-        const clean = dateStr.trim();
-
-        // 1. Formato inglés: "September 16, 2026"
-        const matchEng = clean.match(/^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
-        if (matchEng) {
-            const mName = matchEng[1].toLowerCase();
-            const day = matchEng[2].padStart(2, '0');
-            const year = matchEng[3];
-            const month = months[mName];
-            if (month) return `${year}-${month}-${day}`;
-        }
-
-        // 2. Formato español ya formateado por el toolkit: "Miércoles 16/SEP/2026" o "16/SEP/2026"
-        const matchEsp = clean.match(/(\d{1,2})\/([A-Za-z]{3})\/(\d{4})/);
-        if (matchEsp) {
-            const day = matchEsp[1].padStart(2, '0');
-            const mName = matchEsp[2].toLowerCase();
-            const year = matchEsp[3];
-            const month = spanishMonths[mName];
-            if (month) return `${year}-${month}-${day}`;
-        }
-
-        // 3. Formato ISO ya existente: "2026-09-16"
-        if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
-
-        return null;
-    }
-
-    // Aplica la fecha heredada y las clases indicadas a un quiz recién copiado
-    // usando el endpoint de edición (el endpoint de copia puede ignorar classList).
-    // Devuelve true si la actualización se guardó correctamente.
-    async function applyCopySettingsToQuiz(quizId, targetDate, targetClasses = null) {
-        if (!quizId) return false;
-        const editUrl = `/quiz/${quizId}/edit/`;
-
-        try {
-            const resp = await fetch(editUrl);
-            if (!resp.ok) throw new Error("HTTP " + resp.status);
-            const html = await resp.text();
-
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-
-            const quizName = doc.getElementById('quizName')?.value || '';
-            const adjustedQuizName = adjustQuizNameFormat(quizName);
-            const answerSheet = doc.getElementById('answerSheet')?.value || doc.querySelector('select[name="answerSheet"]')?.value || '';
-            const folder = doc.querySelector('select[name="folder"]')?.value || '';
-            const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
-            const classInputs = Array.from(doc.querySelectorAll('input[name="classList"]:checked'));
-
-            const params = new URLSearchParams();
-            params.append('quizName', adjustedQuizName);
-            params.append('answerSheet', answerSheet);
-            if (targetDate) params.append('quizDate', targetDate); // Asignar fecha heredada
-            params.append('folder', folder);
-            params.append('csrf_token', csrfToken);
-
-            if (targetClasses && targetClasses.length) {
-                // Usar las clases indicadas al copiar
-                targetClasses.forEach(c => params.append('classList', c));
-            } else {
-                classInputs.forEach(inp => {
-                    params.append('classList', inp.value);
-                });
-            }
-
-            const saveResp = await fetch(editUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: params.toString()
-            });
-
-            return saveResp.ok;
-        } catch (e) {
-            console.error("Error al actualizar el quiz copiado:", e);
-            return false;
-        }
-    }
-
-    async function updateQuizDateViaEdit(targetDate, targetClasses = null) {
-        const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)/);
-        if (!quizIdMatch) return;
-        const quizId = quizIdMatch[1];
-        const ok = await applyCopySettingsToQuiz(quizId, targetDate, targetClasses);
-        if (ok) {
-            console.log(`✅ [ZipGrade] Quiz actualizado exitosamente (fecha heredada: ${targetDate}, ${(targetClasses && targetClasses.length) ? targetClasses.length + ' clases asignadas' : 'clases sin cambio'}).`);
-            window.location.reload();
+    // 5. Función de actualización de texto
+    function updateDisplay() {
+        const rawVal = quizDateInput.value;
+        if (rawVal) {
+            textSpan.innerText = formatQuizDate(rawVal);
         } else {
-            console.warn("Fallo al actualizar el quiz copiado.");
+            textSpan.innerText = '';
         }
     }
 
-    // ==========================================
-    // 6.5. DESCARGA DE RESULTADOS PERSONALIZADA EN /QUIZ/.../ALL/
-    // ==========================================
-    // Trunca un nombre de quiz/archivo hasta la sesión (S1, S2, ...) inclusive.
-    // Ej: "Template E.S.A. _ 10_ - 11_ _ P3 _ S2-all-Quiz Format Masive-2026-08-10 23_39_24"
-    //     -> "Template E.S.A. _ 10_ - 11_ _ P3 _ S2"
-    function truncateNameToSession(name) {
-        if (!name) return name;
-        const m = name.match(/^(.*?\bS\d+\b)/i);
-        if (m) return m[1].replace(/[\s_\-|]+$/g, '').trim();
-        return name.trim();
+    // 6. Escuchar cambios
+    quizDateInput.addEventListener('input', updateDisplay);
+    quizDateInput.addEventListener('change', updateDisplay);
+
+    // Actualizar el valor inicial
+    updateDisplay();
+}
+
+// Helper para formatear nombres de quiz antiguos al nuevo formato "Template E.S.A. | Class | Period | Session"
+function adjustQuizNameFormat(nameVal) {
+    if (!nameVal) return nameVal;
+
+    let cleanVal = nameVal.trim();
+    let suffix = '';
+    if (cleanVal.toLowerCase().endsWith(' copy')) {
+        cleanVal = cleanVal.substring(0, cleanVal.length - 5).trim();
+        suffix = ' copy';
     }
 
-    // Construye "Res - <nombre>" a partir del nombre del quiz (con el ° real), del <title>
-    // de la página del quiz o del filename del servidor. Los separadores (|, _) se
-    // convierten en " - " (guión); el ° se conserva porque Windows lo soporta.
-    function buildResultsFilename(serverFilename, pageTitle, quizName, extension) {
-        let base = '';
-        if (quizName) {
-            base = quizName;
-        } else if (pageTitle && /^ZipGrade:\s*Quiz:\s*/i.test(pageTitle)) {
-            base = pageTitle.replace(/^ZipGrade:\s*Quiz:\s*/i, '');
-        } else if (serverFilename) {
-            base = serverFilename.replace(/\.[^.]+$/, '');
+    const parts = cleanVal.split('|').map(p => p.trim());
+    if (parts.length >= 4 && parts[0] === 'Template E.S.A.') {
+        const sessVal = parts[1];
+        // Si el segundo elemento tiene formato de sesión (ej: S1, S2, S10), es el formato viejo
+        if (/^S\d+$/i.test(sessVal)) {
+            const prefix = parts[0];
+            const session = parts[1];
+            const period = parts[2];
+            const classVal = parts[3];
+            return `${prefix} | ${classVal} | ${period} | ${session}${suffix}`;
         }
-        base = truncateNameToSession(base);
-        base = cleanResultsBaseName(base);
-        return `Res - ${base}.${extension}`;
     }
+    return nameVal;
+}
 
-    // Limpieza del nombre de archivo: separadores (|, _) -> " - ", caracteres
-    // inválidos de Windows -> espacio, y se colapsan los guiones consecutivos.
-    // El ° (U+00B0) se conserva tal cual: Windows lo soporta en nombres de archivo.
-    function cleanResultsBaseName(name) {
-        return String(name || '')
-            .replace(/^(?:Resultados|Res)[_-]/i, '') // evitar "Res_Res..." / "Resultados_..."
-            .replace(/[|_]+/g, ' - ')                // separadores -> guión
-            .replace(/[\\/:*?"<>]+/g, ' ')           // inválidos de Windows -> espacio
-            .replace(/\s*-\s*-+\s*/g, ' - ')         // colapsar guiones consecutivos
-            .replace(/\s+/g, ' ')
-            .replace(/^\s*-+\s*/g, '')               // sin guión inicial
-            .replace(/\s*-+\s*$/g, '')               // sin guión final
-            .trim();
+// ¿Un segmento del nombre es un token de grado (individual "3°" o rango "3° - 5°"/"3° a 5°")?
+function isGradeToken(p) {
+    if (!p) return false;
+    if (/^(S\d+|P\d+)$/i.test(p)) return false;
+    if (/^\d{1,2}\s*[º°ª]?[A-Za-z]?$/.test(p)) return true;
+    return /^\d{1,2}\s*[º°ª]?[A-Za-z]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?$/i.test(p);
+}
+
+// ¿Un segmento del nombre es un código de clase tipo "601" o "1002"?
+function isClassCodeToken(p) {
+    if (!p) return false;
+    const m = String(p).match(/^\d{3,4}$/);
+    if (!m) return false;
+    const v = parseInt(m[0], 10);
+    return v >= 600 && v <= 1200;
+}
+
+// Índice del token que representa la clase dentro del nombre
+// (grado individual "3°", rango "6° - 9°" o código "601")
+function findQuizClassTokenIdx(parts) {
+    const gradeIdx = parts.findIndex(isGradeToken);
+    if (gradeIdx !== -1) return gradeIdx;
+    return parts.findIndex(isClassCodeToken);
+}
+
+// Actualiza el grado (ej: "4°") dentro del nombre de un quiz con formato "... | 3° | P3 | S1".
+// Reemplaza el token de grado (individual o rango) donde esté; si no hay, lo agrega al final.
+// Al aplicar un grado nuevo también quita el sufijo " copy" (el nombre ya pasa a ser distinto)
+// y elimina duplicados del grado (ej: "... copy | 4°").
+function updateQuizNameGrade(nameVal, gradeVal) {
+    if (!nameVal) return nameVal;
+    const grade = String(gradeVal || '').trim();
+    const parts = String(nameVal).split('|').map(p => p.trim());
+    const classIdx = findQuizClassTokenIdx(parts);
+    const hadClass = classIdx !== -1;
+    const cleanParts = parts.filter((p, i) => i !== classIdx);
+    if (hadClass) {
+        cleanParts.splice(classIdx, 0, grade || parts[classIdx]);
+    } else if (grade) {
+        cleanParts.push(grade);
     }
+    let result = cleanParts.join(' | ');
+    if (grade) result = result.replace(/\s*copy(?:\s*\d+)?$/i, '');
+    return result;
+}
 
-    // Obtiene los formatos de exportación personalizados del quiz actual
-    async function fetchCustomExportFormats(quizAllBaseUrl, bypassCache) {
-        const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
-        const cacheKey = quizId ? 'zg_formats_' + quizId : null;
-        if (cacheKey && !bypassCache) {
-            const cached = zgCacheGet(cacheKey, ZG_FORMATS_CACHE_TTL_MS);
-            if (cached !== null && cached !== undefined) return cached;
+// Extrae el token de grado del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°")
+function extractGradeFromQuizName(nameVal) {
+    if (!nameVal) return '';
+    const parts = String(nameVal).split('|').map(p => p.trim());
+    const idx = parts.findIndex(isGradeToken);
+    return idx !== -1 ? parts[idx] : '';
+}
+
+// Grado de una clase según su etiqueta (ej: "3°" -> "3°", "6-1" -> "6-1", "1° - 2°" -> "1° - 2°")
+function extractGradeFromClassLabel(text) {
+    const clean = String(text || '').trim();
+    if (!clean) return '';
+    if (isGradeToken(clean)) return clean;
+    const range = clean.match(/\d{1,2}\s*[º°ª]?\s*(?:[-–]|a)\s*\d{1,2}\s*[º°ª]?[A-Za-z]?/);
+    if (range && !/^(S\d+|P\d+)$/i.test(range[0])) return range[0];
+    const deg = clean.match(/\d{1,2}[º°ª]/);
+    if (deg) return deg[0];
+    // Códigos tipo "601" (grado 6, sección 01) o "1002" (grado 10, sección 02)
+    const codeMatch = clean.match(/\b(\d{3,4})\b/);
+    if (codeMatch) {
+        const val = parseInt(codeMatch[1], 10);
+        if (val >= 600 && val <= 1200) {
+            const grade = Math.floor(val / 100);
+            return grade + '°';
         }
-        const listUrl = `${quizAllBaseUrl}exportFormat/list/`;
-        const res = await customRequest({ method: 'GET', url: listUrl }, 45000);
-        if (res.status !== 200) throw new Error(`HTTP ${res.status} al obtener formatos de exportación`);
+    }
+    const num = clean.match(/^\d{1,2}(?:-\d{1,2})?/);
+    if (num) return num[0];
+    return '';
+}
 
-        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-        const formats = [];
-        // Enlaces tipo: /quiz/<id>/all/exportFormat/<formatId>/export/CSV/ o /export/XLSX/
-        const links = Array.from(doc.querySelectorAll('a[href*="/exportFormat/"][href*="/export/"]'));
-        links.forEach(a => {
-            const href = a.getAttribute('href');
-            const m = href.match(/\/exportFormat\/([^/]+)\/export\/(CSV|XLSX)\//i);
-            if (!m) return;
-            const formatId = m[1];
-            const type = m[2].toUpperCase();
-            // Nombre del formato: primera celda de la fila del enlace
-            const row = a.closest('tr');
-            let formatName = formatId;
-            if (row) {
-                const firstCell = row.querySelector('td');
-                if (firstCell && firstCell.innerText.trim()) {
-                    formatName = firstCell.innerText.trim();
-                }
-            }
-            let fmt = formats.find(f => f.id === formatId);
-            if (!fmt) {
-                fmt = { id: formatId, name: formatName, csv: null, xlsx: null };
-                formats.push(fmt);
-            }
-            if (type === 'CSV') fmt.csv = new URL(href, window.location.origin).href;
-            if (type === 'XLSX') fmt.xlsx = new URL(href, window.location.origin).href;
+// Marca en la lista de clases (checkbox) la PRIMERA clase cuyo grado coincida con gradeVal
+// y desmarca todas las demás (selección de UNA sola clase).
+function syncClassFromGrade(classesBox, gradeVal) {
+    const g = String(gradeVal || '').trim();
+    if (!g || !classesBox) return;
+    const boxes = Array.from(classesBox.querySelectorAll('input[name="classList"]'));
+    const match = boxes.find(cb => {
+        const labelText = cb.parentElement ? cb.parentElement.textContent.trim() : '';
+        return extractGradeFromClassLabel(labelText) === g;
+    });
+    if (match) {
+        boxes.forEach(cb => { cb.checked = (cb === match); });
+    }
+}
+
+// Helper para convertir "September 15, 2026" o "Miércoles 16/SEP/2026" a "2026-09-15"
+function parseEnglishDate(dateStr) {
+    if (!dateStr) return null;
+    const months = {
+        january: '01', february: '02', march: '03', april: '04',
+        may: '05', june: '06', july: '07', august: '08',
+        september: '09', october: '10', november: '11', december: '12'
+    };
+    const spanishMonths = {
+        ene: '01', feb: '02', mar: '03', abr: '04',
+        may: '05', jun: '06', jul: '07', ago: '08',
+        sep: '09', oct: '10', nov: '11', dic: '12'
+    };
+
+    const clean = dateStr.trim();
+
+    // 1. Formato inglés: "September 16, 2026"
+    const matchEng = clean.match(/^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
+    if (matchEng) {
+        const mName = matchEng[1].toLowerCase();
+        const day = matchEng[2].padStart(2, '0');
+        const year = matchEng[3];
+        const month = months[mName];
+        if (month) return `${year}-${month}-${day}`;
+    }
+
+    // 2. Formato español ya formateado por el toolkit: "Miércoles 16/SEP/2026" o "16/SEP/2026"
+    const matchEsp = clean.match(/(\d{1,2})\/([A-Za-z]{3})\/(\d{4})/);
+    if (matchEsp) {
+        const day = matchEsp[1].padStart(2, '0');
+        const mName = matchEsp[2].toLowerCase();
+        const year = matchEsp[3];
+        const month = spanishMonths[mName];
+        if (month) return `${year}-${month}-${day}`;
+    }
+
+    // 3. Formato ISO ya existente: "2026-09-16"
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+
+    return null;
+}
+
+// Aplica la fecha heredada y las clases indicadas a un quiz recién copiado
+// usando el endpoint de edición (el endpoint de copia puede ignorar classList).
+// Devuelve true si la actualización se guardó correctamente.
+async function applyCopySettingsToQuiz(quizId, targetDate, targetClasses = null) {
+    if (!quizId) return false;
+    const editUrl = `/quiz/${quizId}/edit/`;
+
+    try {
+        const resp = await fetch(editUrl);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const html = await resp.text();
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        const quizName = doc.getElementById('quizName')?.value || '';
+        const adjustedQuizName = adjustQuizNameFormat(quizName);
+        const answerSheet = doc.getElementById('answerSheet')?.value || doc.querySelector('select[name="answerSheet"]')?.value || '';
+        const folder = doc.querySelector('select[name="folder"]')?.value || '';
+        const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
+        const classInputs = Array.from(doc.querySelectorAll('input[name="classList"]:checked'));
+
+        const params = new URLSearchParams();
+        params.append('quizName', adjustedQuizName);
+        params.append('answerSheet', answerSheet);
+        if (targetDate) params.append('quizDate', targetDate); // Asignar fecha heredada
+        params.append('folder', folder);
+        params.append('csrf_token', csrfToken);
+
+        if (targetClasses && targetClasses.length) {
+            // Usar las clases indicadas al copiar
+            targetClasses.forEach(c => params.append('classList', c));
+        } else {
+            classInputs.forEach(inp => {
+                params.append('classList', inp.value);
+            });
+        }
+
+        const saveResp = await fetch(editUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: params.toString()
         });
-        if (cacheKey) zgCacheSet(cacheKey, formats);
-        return formats;
+
+        return saveResp.ok;
+    } catch (e) {
+        console.error("Error al actualizar el quiz copiado:", e);
+        return false;
+    }
+}
+
+async function updateQuizDateViaEdit(targetDate, targetClasses = null) {
+    const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)/);
+    if (!quizIdMatch) return;
+    const quizId = quizIdMatch[1];
+    const ok = await applyCopySettingsToQuiz(quizId, targetDate, targetClasses);
+    if (ok) {
+        console.log(`✅ [ZipGrade] Quiz actualizado exitosamente (fecha heredada: ${targetDate}, ${(targetClasses && targetClasses.length) ? targetClasses.length + ' clases asignadas' : 'clases sin cambio'}).`);
+        window.location.reload();
+    } else {
+        console.warn("Fallo al actualizar el quiz copiado.");
+    }
+}
+
+// ==========================================
+// 6.5. DESCARGA DE RESULTADOS PERSONALIZADA EN /QUIZ/.../ALL/
+// ==========================================
+// Trunca un nombre de quiz/archivo hasta la sesión (S1, S2, ...) inclusive.
+// Ej: "Template E.S.A. _ 10_ - 11_ _ P3 _ S2-all-Quiz Format Masive-2026-08-10 23_39_24"
+//     -> "Template E.S.A. _ 10_ - 11_ _ P3 _ S2"
+function truncateNameToSession(name) {
+    if (!name) return name;
+    const m = name.match(/^(.*?\bS\d+\b)/i);
+    if (m) return m[1].replace(/[\s_\-|]+$/g, '').trim();
+    return name.trim();
+}
+
+// Construye "Res - <nombre>" a partir del nombre del quiz (con el ° real), del <title>
+// de la página del quiz o del filename del servidor. Los separadores (|, _) se
+// convierten en " - " (guión); el ° se conserva porque Windows lo soporta.
+function buildResultsFilename(serverFilename, pageTitle, quizName, extension) {
+    let base = '';
+    if (quizName) {
+        base = quizName;
+    } else if (pageTitle && /^ZipGrade:\s*Quiz:\s*/i.test(pageTitle)) {
+        base = pageTitle.replace(/^ZipGrade:\s*Quiz:\s*/i, '');
+    } else if (serverFilename) {
+        base = serverFilename.replace(/\.[^.]+$/, '');
+    }
+    base = truncateNameToSession(base);
+    base = cleanResultsBaseName(base);
+    return `Res - ${base}.${extension}`;
+}
+
+// Limpieza del nombre de archivo: separadores (|, _) -> " - ", caracteres
+// inválidos de Windows -> espacio, y se colapsan los guiones consecutivos.
+// El ° (U+00B0) se conserva tal cual: Windows lo soporta en nombres de archivo.
+function cleanResultsBaseName(name) {
+    return String(name || '')
+        .replace(/^(?:Resultados|Res)[_-]/i, '') // evitar "Res_Res..." / "Resultados_..."
+        .replace(/[|_]+/g, ' - ')                // separadores -> guión
+        .replace(/[\\/:*?"<>]+/g, ' ')           // inválidos de Windows -> espacio
+        .replace(/\s*-\s*-+\s*/g, ' - ')         // colapsar guiones consecutivos
+        .replace(/\s+/g, ' ')
+        .replace(/^\s*-+\s*/g, '')               // sin guión inicial
+        .replace(/\s*-+\s*$/g, '')               // sin guión final
+        .trim();
+}
+
+// Obtiene los formatos de exportación personalizados del quiz actual
+async function fetchCustomExportFormats(quizAllBaseUrl, bypassCache) {
+    const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
+    const cacheKey = quizId ? 'zg_formats_' + quizId : null;
+    if (cacheKey && !bypassCache) {
+        const cached = zgCacheGet(cacheKey, ZG_FORMATS_CACHE_TTL_MS);
+        if (cached !== null && cached !== undefined) return cached;
+    }
+    const listUrl = `${quizAllBaseUrl}exportFormat/list/`;
+    const res = await customRequest({ method: 'GET', url: listUrl }, 45000);
+    if (res.status !== 200) throw new Error(`HTTP ${res.status} al obtener formatos de exportación`);
+
+    const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+    const formats = [];
+    // Enlaces tipo: /quiz/<id>/all/exportFormat/<formatId>/export/CSV/ o /export/XLSX/
+    const links = Array.from(doc.querySelectorAll('a[href*="/exportFormat/"][href*="/export/"]'));
+    links.forEach(a => {
+        const href = a.getAttribute('href');
+        const m = href.match(/\/exportFormat\/([^/]+)\/export\/(CSV|XLSX)\//i);
+        if (!m) return;
+        const formatId = m[1];
+        const type = m[2].toUpperCase();
+        // Nombre del formato: primera celda de la fila del enlace
+        const row = a.closest('tr');
+        let formatName = formatId;
+        if (row) {
+            const firstCell = row.querySelector('td');
+            if (firstCell && firstCell.innerText.trim()) {
+                formatName = firstCell.innerText.trim();
+            }
+        }
+        let fmt = formats.find(f => f.id === formatId);
+        if (!fmt) {
+            fmt = { id: formatId, name: formatName, csv: null, xlsx: null };
+            formats.push(fmt);
+        }
+        if (type === 'CSV') fmt.csv = new URL(href, window.location.origin).href;
+        if (type === 'XLSX') fmt.xlsx = new URL(href, window.location.origin).href;
+    });
+    if (cacheKey) zgCacheSet(cacheKey, formats);
+    return formats;
+}
+
+// Descarga un formato personalizado y lo guarda con el nombre "Res - ..."
+async function downloadCustomExport(format, preferType, quizName) {
+    const url = (preferType === 'CSV' ? (format.csv || format.xlsx) : (format.xlsx || format.csv));
+    if (!url) throw new Error('Este formato no tiene enlace de descarga disponible.');
+    const ext = url.toUpperCase().includes('/XLSX/') ? 'xlsx' : 'csv';
+
+    const res = await customRequest({ method: 'GET', url: url, responseType: 'blob' }, 90000);
+    if (res.status !== 200 || !(res.response instanceof Blob) || res.response.size === 0) {
+        throw new Error(`El servidor no devolvió un archivo válido (HTTP ${res.status}).`);
     }
 
-    // Descarga un formato personalizado y lo guarda con el nombre "Res - ..."
-    async function downloadCustomExport(format, preferType, quizName) {
-        const url = (preferType === 'CSV' ? (format.csv || format.xlsx) : (format.xlsx || format.csv));
-        if (!url) throw new Error('Este formato no tiene enlace de descarga disponible.');
-        const ext = url.toUpperCase().includes('/XLSX/') ? 'xlsx' : 'csv';
-
-        const res = await customRequest({ method: 'GET', url: url, responseType: 'blob' }, 90000);
-        if (res.status !== 200 || !(res.response instanceof Blob) || res.response.size === 0) {
-            throw new Error(`El servidor no devolvió un archivo válido (HTTP ${res.status}).`);
-        }
-
-        // Nombre que propone el servidor
-        let serverFilename = '';
-        const cd = (res.headers || '').match(/content-disposition:[^\n]*filename\*?=(?:UTF-8'')?"?([^";\n]+)/i);
-        if (cd) {
-            try { serverFilename = decodeURIComponent(cd[1].trim()); } catch (e) { serverFilename = cd[1].trim(); }
-        }
-        const filename = buildResultsFilename(serverFilename, document.title, quizName, ext);
-        downloadBlob(res.response, filename);
-        return filename;
+    // Nombre que propone el servidor
+    let serverFilename = '';
+    const cd = (res.headers || '').match(/content-disposition:[^\n]*filename\*?=(?:UTF-8'')?"?([^";\n]+)/i);
+    if (cd) {
+        try { serverFilename = decodeURIComponent(cd[1].trim()); } catch (e) { serverFilename = cd[1].trim(); }
     }
+    const filename = buildResultsFilename(serverFilename, document.title, quizName, ext);
+    downloadBlob(res.response, filename);
+    return filename;
+}
 
-    // Modal simple para elegir formato/tipo cuando hay más de uno
-    function showExportFormatChooser(formats) {
-        return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-            const modal = document.createElement('div');
-            modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:420px; max-width:92vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-            modal.innerHTML = `
+// Modal simple para elegir formato/tipo cuando hay más de uno
+function showExportFormatChooser(formats) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:420px; max-width:92vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        modal.innerHTML = `
                 <h4 style="margin:0 0 4px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-floppy-o"></i> Descarga personalizada de resultados</h4>
                 <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se encontraron ${formats.length} descargas personalizadas. Elige cuál exportar:</p>
                 <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
@@ -4286,200 +4304,200 @@
                     <button id="zg-export-accept" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-download"></i> Descargar</button>
                 </div>
             `;
-            overlay.appendChild(modal);
-            document.body.appendChild(overlay);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
 
-            const cleanup = (val) => { overlay.remove(); resolve(val); };
-            modal.querySelector('#zg-export-cancel').addEventListener('click', () => cleanup(null));
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
-            modal.querySelector('#zg-export-accept').addEventListener('click', () => {
-                const idx = parseInt(modal.querySelector('#zg-export-format-select').value, 10);
-                const type = modal.querySelector('input[name="zg-export-type"]:checked')?.value || 'XLSX';
-                cleanup({ format: formats[idx], type });
-            });
+        const cleanup = (val) => { overlay.remove(); resolve(val); };
+        modal.querySelector('#zg-export-cancel').addEventListener('click', () => cleanup(null));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+        modal.querySelector('#zg-export-accept').addEventListener('click', () => {
+            const idx = parseInt(modal.querySelector('#zg-export-format-select').value, 10);
+            const type = modal.querySelector('input[name="zg-export-type"]:checked')?.value || 'XLSX';
+            cleanup({ format: formats[idx], type });
+        });
+    });
+}
+
+// Descarga resultados para un quiz dado su URL base "/quiz/<id>/all/"
+// skipChooser: si es true, siempre usa el primer formato sin mostrar el selector
+async function handleResultsDownloadClick(btn, quizAllBaseUrl = null, skipChooser = false) {
+    if (!quizAllBaseUrl) {
+        const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)\/all\//);
+        if (!quizIdMatch) return;
+        quizAllBaseUrl = `/quiz/${quizIdMatch[1]}/all/`;
+    }
+
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Resultados';
+
+    try {
+        console.log('🔍 [ZipGrade] Buscando descargas personalizadas del quiz...');
+        const formats = await fetchCustomExportFormats(quizAllBaseUrl);
+
+        if (formats.length === 0) {
+            alert('Este quiz no tiene descargas personalizadas (Export Formats) creadas.\nCrea una desde "Custom Export Wizard..." primero.');
+            return;
+        }
+
+        let chosen;
+        if (formats.length === 1 || skipChooser) {
+            // Solo existe una descarga personalizada (o modo masivo): se escoge por defecto
+            chosen = { format: formats[0], type: formats[0].xlsx ? 'XLSX' : 'CSV' };
+            console.log(`✅ [ZipGrade] Descarga personalizada seleccionada: "${formats[0].name}" (${chosen.type})`);
+        } else {
+            chosen = await showExportFormatChooser(formats);
+            if (!chosen) return; // cancelado
+        }
+
+        console.log(`⬇️ [ZipGrade] Descargando resultados con formato "${chosen.format.name}" (${chosen.type})...`);
+        const filename = await downloadCustomExport(chosen.format, chosen.type);
+        console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
+    } catch (err) {
+        console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
+        alert(`No se pudo descargar los resultados: ${err.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+// Formatea la fila "Date:" de la tabla de detalles del quiz a "Miércoles 16/SEP/2026"
+function formatQuizDetailDate() {
+    const tds = Array.from(document.querySelectorAll('td'));
+    for (let i = 0; i < tds.length; i++) {
+        if (tds[i].innerText.trim() === 'Date:') {
+            const valTd = tds[i].nextElementSibling;
+            if (!valTd || valTd.dataset.zgDateFormatted) return;
+            const englishDate = valTd.innerText.trim();
+            const isoDate = parseEnglishDate(englishDate);
+            if (isoDate) {
+                valTd.dataset.originalDate = isoDate;
+                valTd.innerText = formatQuizDate(isoDate);
+                valTd.dataset.zgDateFormatted = 'true';
+                console.log(`✅ [ZipGrade] Fecha del quiz formateada: ${englishDate} -> ${valTd.innerText}`);
+            }
+            return;
+        }
+    }
+}
+
+function initQuizDetailPage() {
+    // Formatear fecha del detalle del quiz (September 16, 2026 -> Miércoles 16/SEP/2026)
+    formatQuizDetailDate();
+
+    // Pre-formatear el campo del nombre del nuevo quiz en el modal de copia
+    const newQuizNameInput = document.getElementById('newQuizName');
+    if (newQuizNameInput) {
+        newQuizNameInput.value = adjustQuizNameFormat(newQuizNameInput.value);
+    }
+
+    // 1. Guardar la fecha del quiz origen al abrir/interactuar con el modal de copia o enviar el formulario
+    const copyForm = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
+    function captureSourceQuizDate() {
+        const tds = Array.from(document.querySelectorAll('td'));
+        let dateText = '';
+        for (let i = 0; i < tds.length; i++) {
+            if (tds[i].innerText.includes('Date:')) {
+                const valTd = tds[i].nextElementSibling;
+                if (valTd) {
+                    dateText = valTd.dataset.originalDate || valTd.innerText.trim();
+                }
+                break;
+            }
+        }
+        if (dateText) {
+            const parsedDate = parseEnglishDate(dateText);
+            if (parsedDate) {
+                sessionStorage.setItem('zg_copy_pending', 'true');
+                sessionStorage.setItem('zg_copy_source_date', parsedDate);
+                console.log("💾 [ZipGrade] Guardada fecha de origen para copia:", parsedDate);
+            }
+        }
+    }
+
+    const copyBtn = document.querySelector('button[data-target="#myModelCopy"]');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', captureSourceQuizDate);
+        // Al abrir el modal de copia nativo, desmarcar TODAS las clases para que
+        // ninguna venga preseleccionada (el nuevo quiz no hereda las del origen).
+        copyBtn.addEventListener('click', () => {
+            const form = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
+            if (form) {
+                form.querySelectorAll('input[name="classList"]').forEach(inp => { inp.checked = false; });
+            }
         });
     }
 
-    // Descarga resultados para un quiz dado su URL base "/quiz/<id>/all/"
-    // skipChooser: si es true, siempre usa el primer formato sin mostrar el selector
-    async function handleResultsDownloadClick(btn, quizAllBaseUrl = null, skipChooser = false) {
-        if (!quizAllBaseUrl) {
-            const quizIdMatch = window.location.pathname.match(/\/quiz\/([^/]+)\/all\//);
-            if (!quizIdMatch) return;
-            quizAllBaseUrl = `/quiz/${quizIdMatch[1]}/all/`;
+    if (copyForm) {
+        const submitBtn = copyForm.querySelector('button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.addEventListener('click', captureSourceQuizDate);
         }
+        copyForm.addEventListener('submit', captureSourceQuizDate);
+    }
 
-        const originalHtml = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Resultados';
-
+    // 2. Si venimos de una acción de copia pendiente en este nuevo quiz, procesar
+    if (sessionStorage.getItem('zg_copy_pending') === 'true') {
+        const targetDate = sessionStorage.getItem('zg_copy_source_date');
+        let targetClasses = null;
         try {
-            console.log('🔍 [ZipGrade] Buscando descargas personalizadas del quiz...');
-            const formats = await fetchCustomExportFormats(quizAllBaseUrl);
+            targetClasses = JSON.parse(sessionStorage.getItem('zg_copy_source_classes') || 'null');
+        } catch (e) {
+            targetClasses = null;
+        }
+        sessionStorage.removeItem('zg_copy_pending');
+        sessionStorage.removeItem('zg_copy_source_date');
+        sessionStorage.removeItem('zg_copy_source_classes');
 
-            if (formats.length === 0) {
-                alert('Este quiz no tiene descargas personalizadas (Export Formats) creadas.\nCrea una desde "Custom Export Wizard..." primero.');
-                return;
-            }
-
-            let chosen;
-            if (formats.length === 1 || skipChooser) {
-                // Solo existe una descarga personalizada (o modo masivo): se escoge por defecto
-                chosen = { format: formats[0], type: formats[0].xlsx ? 'XLSX' : 'CSV' };
-                console.log(`✅ [ZipGrade] Descarga personalizada seleccionada: "${formats[0].name}" (${chosen.type})`);
-            } else {
-                chosen = await showExportFormatChooser(formats);
-                if (!chosen) return; // cancelado
-            }
-
-            console.log(`⬇️ [ZipGrade] Descargando resultados con formato "${chosen.format.name}" (${chosen.type})...`);
-            const filename = await downloadCustomExport(chosen.format, chosen.type);
-            console.log(`📥 [ZipGrade] Resultados descargados como: ${filename}`);
-        } catch (err) {
-            console.error('❌ [ZipGrade] Error en descarga de resultados:', err);
-            alert(`No se pudo descargar los resultados: ${err.message}`);
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
+        if (targetDate || (targetClasses && targetClasses.length)) {
+            updateQuizDateViaEdit(targetDate || '', targetClasses);
         }
     }
+}
 
-    // Formatea la fila "Date:" de la tabla de detalles del quiz a "Miércoles 16/SEP/2026"
-    function formatQuizDetailDate() {
-        const tds = Array.from(document.querySelectorAll('td'));
-        for (let i = 0; i < tds.length; i++) {
-            if (tds[i].innerText.trim() === 'Date:') {
-                const valTd = tds[i].nextElementSibling;
-                if (!valTd || valTd.dataset.zgDateFormatted) return;
-                const englishDate = valTd.innerText.trim();
-                const isoDate = parseEnglishDate(englishDate);
-                if (isoDate) {
-                    valTd.dataset.originalDate = isoDate;
-                    valTd.innerText = formatQuizDate(isoDate);
-                    valTd.dataset.zgDateFormatted = 'true';
-                    console.log(`✅ [ZipGrade] Fecha del quiz formateada: ${englishDate} -> ${valTd.innerText}`);
-                }
-                return;
-            }
-        }
-    }
+// ==========================================
+// 7. INICIALIZAR EN /CLASSES/ (INTERFAZ COMPLETA DOWLOADER ZIP)
+// ==========================================
+async function initUI() {
+    console.log("⚙️ [ZipGrade] Inicializando interfaz y ordenando cursos...");
+    ensureAllEntriesShown();
 
-    function initQuizDetailPage() {
-        // Formatear fecha del detalle del quiz (September 16, 2026 -> Miércoles 16/SEP/2026)
-        formatQuizDetailDate();
+    const table = document.getElementById('subjectTable');
+    if (!table) return;
 
-        // Pre-formatear el campo del nombre del nuevo quiz en el modal de copia
-        const newQuizNameInput = document.getElementById('newQuizName');
-        if (newQuizNameInput) {
-            newQuizNameInput.value = adjustQuizNameFormat(newQuizNameInput.value);
+    try {
+        await fetchSheets();
+
+        const mainCol = table.closest('.col-md-8') || table.parentElement;
+        if (mainCol) {
+            mainCol.style.width = '100%';
+            mainCol.style.marginLeft = '0';
         }
 
-        // 1. Guardar la fecha del quiz origen al abrir/interactuar con el modal de copia o enviar el formulario
-        const copyForm = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
-        function captureSourceQuizDate() {
-            const tds = Array.from(document.querySelectorAll('td'));
-            let dateText = '';
-            for (let i = 0; i < tds.length; i++) {
-                if (tds[i].innerText.includes('Date:')) {
-                    const valTd = tds[i].nextElementSibling;
-                    if (valTd) {
-                        dateText = valTd.dataset.originalDate || valTd.innerText.trim();
-                    }
-                    break;
-                }
-            }
-            if (dateText) {
-                const parsedDate = parseEnglishDate(dateText);
-                if (parsedDate) {
-                    sessionStorage.setItem('zg_copy_pending', 'true');
-                    sessionStorage.setItem('zg_copy_source_date', parsedDate);
-                    console.log("💾 [ZipGrade] Guardada fecha de origen para copia:", parsedDate);
-                }
-            }
-        }
+        const tbody = table.querySelector('tbody');
+        let rows = Array.from(tbody.querySelectorAll('tr'));
 
-        const copyBtn = document.querySelector('button[data-target="#myModelCopy"]');
-        if (copyBtn) {
-            copyBtn.addEventListener('click', captureSourceQuizDate);
-            // Al abrir el modal de copia nativo, desmarcar TODAS las clases para que
-            // ninguna venga preseleccionada (el nuevo quiz no hereda las del origen).
-            copyBtn.addEventListener('click', () => {
-                const form = document.querySelector('form[action*="/quizzes/copyQuiz/"]');
-                if (form) {
-                    form.querySelectorAll('input[name="classList"]').forEach(inp => { inp.checked = false; });
-                }
-            });
-        }
+        rows.sort((a, b) => {
+            const weightA = getAcademicWeight(a);
+            const weightB = getAcademicWeight(b);
+            if (weightA !== weightB) return weightA - weightB;
 
-        if (copyForm) {
-            const submitBtn = copyForm.querySelector('button[type="submit"]');
-            if (submitBtn) {
-                submitBtn.addEventListener('click', captureSourceQuizDate);
-            }
-            copyForm.addEventListener('submit', captureSourceQuizDate);
-        }
+            const nameElA = a.querySelector('td:nth-child(2)');
+            const nameElB = b.querySelector('td:nth-child(2)');
+            const nameA = nameElA ? nameElA.innerText.trim() : '';
+            const nameB = nameElB ? nameElB.innerText.trim() : '';
+            return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+        rows.forEach(row => tbody.appendChild(row));
 
-        // 2. Si venimos de una acción de copia pendiente en este nuevo quiz, procesar
-        if (sessionStorage.getItem('zg_copy_pending') === 'true') {
-            const targetDate = sessionStorage.getItem('zg_copy_source_date');
-            let targetClasses = null;
-            try {
-                targetClasses = JSON.parse(sessionStorage.getItem('zg_copy_source_classes') || 'null');
-            } catch (e) {
-                targetClasses = null;
-            }
-            sessionStorage.removeItem('zg_copy_pending');
-            sessionStorage.removeItem('zg_copy_source_date');
-            sessionStorage.removeItem('zg_copy_source_classes');
-
-            if (targetDate || (targetClasses && targetClasses.length)) {
-                updateQuizDateViaEdit(targetDate || '', targetClasses);
-            }
-        }
-    }
-
-    // ==========================================
-    // 7. INICIALIZAR EN /CLASSES/ (INTERFAZ COMPLETA DOWLOADER ZIP)
-    // ==========================================
-    async function initUI() {
-        console.log("⚙️ [ZipGrade] Inicializando interfaz y ordenando cursos...");
-        ensureAllEntriesShown();
-
-        const table = document.getElementById('subjectTable');
-        if (!table) return;
-
-        try {
-            await fetchSheets();
-
-            const mainCol = table.closest('.col-md-8') || table.parentElement;
-            if (mainCol) {
-                mainCol.style.width = '100%';
-                mainCol.style.marginLeft = '0';
-            }
-
-            const tbody = table.querySelector('tbody');
-            let rows = Array.from(tbody.querySelectorAll('tr'));
-
-            rows.sort((a, b) => {
-                const weightA = getAcademicWeight(a);
-                const weightB = getAcademicWeight(b);
-                if (weightA !== weightB) return weightA - weightB;
-
-                const nameElA = a.querySelector('td:nth-child(2)');
-                const nameElB = b.querySelector('td:nth-child(2)');
-                const nameA = nameElA ? nameElA.innerText.trim() : '';
-                const nameB = nameElB ? nameElB.innerText.trim() : '';
-                return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-            });
-            rows.forEach(row => tbody.appendChild(row));
-
-            // Cabecera
-            const theadRow = table.querySelector('thead tr');
-            if (theadRow && !theadRow.querySelector('.zg-custom-th')) {
-                const newTh = document.createElement('th');
-                newTh.className = 'text-center zg-custom-th';
-                newTh.style.cssText = 'vertical-align:middle; width:220px; color:#ffffff;';
-                newTh.innerHTML = `
+        // Cabecera
+        const theadRow = table.querySelector('thead tr');
+        if (theadRow && !theadRow.querySelector('.zg-custom-th')) {
+            const newTh = document.createElement('th');
+            newTh.className = 'text-center zg-custom-th';
+            newTh.style.cssText = 'vertical-align:middle; width:220px; color:#ffffff;';
+            newTh.innerHTML = `
                     <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
                         <div style="display:flex; align-items:center; gap:6px;">
                             <input type="checkbox" id="zg-master-check" title="Seleccionar/Deseleccionar todos" style="margin:0; cursor:pointer; width:16px; height:16px; accent-color:#3c87c8;" />
@@ -4490,20 +4508,20 @@
                         </span>
                     </div>
                 `;
-                theadRow.appendChild(newTh);
-            }
+            theadRow.appendChild(newTh);
+        }
 
-            // Barra superior Dashboard
-            if (!document.getElementById('zg-top-bar')) {
-                const topBar = document.createElement('div');
-                topBar.id = 'zg-top-bar';
-                topBar.style.cssText = `
+        // Barra superior Dashboard
+        if (!document.getElementById('zg-top-bar')) {
+            const topBar = document.createElement('div');
+            topBar.id = 'zg-top-bar';
+            topBar.style.cssText = `
                     display: flex; flex-direction: column; gap: 12px;
                     background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
                     padding: 16px 20px; margin: 0 auto 18px auto; width: 100%;
                     box-shadow: 0 4px 12px rgba(0,0,0,0.06); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
                 `;
-                topBar.innerHTML = `
+            topBar.innerHTML = `
                     <!-- Fila 1: Controles de Selección y Asignación -->
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -4585,30 +4603,30 @@
                         </div>
                     </div>
                 `;
-                table.parentNode.insertBefore(topBar, table);
-            }
+            table.parentNode.insertBefore(topBar, table);
+        }
 
-            // Filas de Cursos
-            rows.forEach(row => {
-                if (row.querySelector('.zg-custom-td')) return;
+        // Filas de Cursos
+        rows.forEach(row => {
+            if (row.querySelector('.zg-custom-td')) return;
 
-                const nameEl = row.querySelector('td:nth-child(2) h4');
-                const countEl = row.querySelector('td:nth-child(4) h4');
-                const downloadLinkEl = row.querySelector('a[href*="/answerSheetPacks/"]');
-                const studentCount = countEl ? parseInt(countEl.innerText.trim(), 10) || 0 : 0;
+            const nameEl = row.querySelector('td:nth-child(2) h4');
+            const countEl = row.querySelector('td:nth-child(4) h4');
+            const downloadLinkEl = row.querySelector('a[href*="/answerSheetPacks/"]');
+            const studentCount = countEl ? parseInt(countEl.innerText.trim(), 10) || 0 : 0;
 
-                if (nameEl && downloadLinkEl && studentCount > 0) {
-                    const className = nameEl.innerText.trim();
-                    const href = downloadLinkEl.getAttribute('href');
-                    const idMatch = href.match(/\/classes\/([^\/]+)\//);
+            if (nameEl && downloadLinkEl && studentCount > 0) {
+                const className = nameEl.innerText.trim();
+                const href = downloadLinkEl.getAttribute('href');
+                const idMatch = href.match(/\/classes\/([^\/]+)\//);
 
-                    if (idMatch) {
-                        const classId = idMatch[1];
-                        const td = document.createElement('td');
-                        td.className = 'zg-custom-td';
-                        td.style.cssText = 'vertical-align:middle; text-align:center; white-space:nowrap;';
+                if (idMatch) {
+                    const classId = idMatch[1];
+                    const td = document.createElement('td');
+                    td.className = 'zg-custom-td';
+                    td.style.cssText = 'vertical-align:middle; text-align:center; white-space:nowrap;';
 
-                        td.innerHTML = `
+                    td.innerHTML = `
                             <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
                                 <select class="zg-row-sheet" data-class-id="${classId}" data-class-name="${className}" style="padding:4px 6px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; max-width:160px; background:#fff; cursor:pointer;">
                                     <option value="">-- Seleccionar --</option>
@@ -4620,747 +4638,747 @@
                             </div>
                         `;
 
-                        row.appendChild(td);
+                    row.appendChild(td);
 
-                        // La casilla de selección es la NATIVA de ZipGrade (columna 0)
-                        const nativeChk = getNativeClassCheckbox(row);
+                    // La casilla de selección es la NATIVA de ZipGrade (columna 0)
+                    const nativeChk = getNativeClassCheckbox(row);
 
-                        // Evento cambio de plantilla
-                        const rowSelect = td.querySelector('.zg-row-sheet');
-                        rowSelect.addEventListener('change', () => {
-                            if (rowSelect.value && nativeChk && !nativeChk.checked) {
-                                setNativeCheckboxChecked(nativeChk, true);
-                            }
-                            updateSelectedCounter();
-                            saveMappingsToStorage();
-                        });
+                    // Evento cambio de plantilla
+                    const rowSelect = td.querySelector('.zg-row-sheet');
+                    rowSelect.addEventListener('change', () => {
+                        if (rowSelect.value && nativeChk && !nativeChk.checked) {
+                            setNativeCheckboxChecked(nativeChk, true);
+                        }
+                        updateSelectedCounter();
+                        saveMappingsToStorage();
+                    });
 
-                        // Descarga Individual
-                        td.querySelector('.zg-btn-row-download').addEventListener('click', async (e) => {
-                            e.preventDefault();
-                            const select = td.querySelector('.zg-row-sheet');
-                            if (!select.value) {
-                                alert('Selecciona una plantilla para este curso primero.');
-                                return;
-                            }
-                            const session = document.getElementById('zg-global-session').value;
-                            const btn = e.currentTarget;
-                            btn.disabled = true;
-                            btn.style.opacity = '0.5';
+                    // Descarga Individual
+                    td.querySelector('.zg-btn-row-download').addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        const select = td.querySelector('.zg-row-sheet');
+                        if (!select.value) {
+                            alert('Selecciona una plantilla para este curso primero.');
+                            return;
+                        }
+                        const session = document.getElementById('zg-global-session').value;
+                        const btn = e.currentTarget;
+                        btn.disabled = true;
+                        btn.style.opacity = '0.5';
 
-                            console.log(`▶️ [Individual] Descargando ${className}...`);
-                            updateStatusText(`Descargando individual: ${className}...`);
-                            const t0 = Date.now();
+                        console.log(`▶️ [Individual] Descargando ${className}...`);
+                        updateStatusText(`Descargando individual: ${className}...`);
+                        const t0 = Date.now();
 
-                            const pdfBlob = await processSingleDownloadWithRetry(classId, className, select.value, session);
-                            const elapsed = Math.round((Date.now() - t0) / 1000);
-                            if (pdfBlob) {
-                                const filename = `${className}_${session}.pdf`;
-                                downloadBlob(pdfBlob, filename);
-                                updateStatusText(`✅ ${filename} descargado en ${elapsed}s`);
-                            } else {
-                                alert(`No se pudo descargar el PDF de ${className}. Revisa la consola o intenta nuevamente.`);
-                                updateStatusText(`❌ Error al descargar ${className} (${elapsed}s)`);
-                            }
+                        const pdfBlob = await processSingleDownloadWithRetry(classId, className, select.value, session);
+                        const elapsed = Math.round((Date.now() - t0) / 1000);
+                        if (pdfBlob) {
+                            const filename = `${className}_${session}.pdf`;
+                            downloadBlob(pdfBlob, filename);
+                            updateStatusText(`✅ ${filename} descargado en ${elapsed}s`);
+                        } else {
+                            alert(`No se pudo descargar el PDF de ${className}. Revisa la consola o intenta nuevamente.`);
+                            updateStatusText(`❌ Error al descargar ${className} (${elapsed}s)`);
+                        }
 
-                            btn.disabled = false;
-                            btn.style.opacity = '1';
-                        });
-                    }
-                } else {
-                    const emptyTd = document.createElement('td');
-                    emptyTd.className = 'zg-custom-td';
-                    emptyTd.style.cssText = 'vertical-align:middle; text-align:center; color:#94a3b8; font-size:11px;';
-                    emptyTd.innerText = studentCount === 0 ? 'Sin estudiantes' : '-';
-                    row.appendChild(emptyTd);
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                    });
+                }
+            } else {
+                const emptyTd = document.createElement('td');
+                emptyTd.className = 'zg-custom-td';
+                emptyTd.style.cssText = 'vertical-align:middle; text-align:center; color:#94a3b8; font-size:11px;';
+                emptyTd.innerText = studentCount === 0 ? 'Sin estudiantes' : '-';
+                row.appendChild(emptyTd);
+            }
+        });
+
+        // Cargar selecciones previas guardadas en localStorage
+        loadSavedMappingsFromStorage();
+
+        // Persistir selector de sesión en localStorage y recargar asignaciones
+        const sessionSelect = document.getElementById('zg-global-session');
+        const savedSession = localStorage.getItem('zipgrade_toolkit_session');
+        if (savedSession && sessionSelect) {
+            sessionSelect.value = savedSession;
+        }
+        if (sessionSelect) {
+            sessionSelect.addEventListener('change', () => {
+                localStorage.setItem('zipgrade_toolkit_session', sessionSelect.value);
+                loadSavedMappingsFromStorage();
+            });
+        }
+
+        // Controles de Selección
+        const setAllChecks = (state) => {
+            getNativeClassChecks().forEach(chk => setNativeCheckboxChecked(chk, state));
+            const masterChk = document.getElementById('zg-master-check');
+            if (masterChk) {
+                masterChk.checked = state;
+                refreshUniformVisual(masterChk);
+            }
+            updateSelectedCounter();
+            saveMappingsToStorage();
+        };
+
+        document.getElementById('zg-btn-select-all').addEventListener('click', (e) => {
+            e.preventDefault();
+            setAllChecks(true);
+        });
+
+        document.getElementById('zg-btn-deselect-all').addEventListener('click', (e) => {
+            e.preventDefault();
+            setAllChecks(false);
+        });
+
+        const masterChkEl = document.getElementById('zg-master-check');
+        if (masterChkEl) {
+            masterChkEl.addEventListener('change', (e) => {
+                setAllChecks(e.target.checked);
+            });
+        }
+
+        // La selección NATIVA de ZipGrade (casillas de fila de #subjectTable) mantiene
+        // sincronizados el contador y el master del toolkit.
+        if (!zgClassesNativeSyncBound) {
+            zgClassesNativeSyncBound = true;
+            document.addEventListener('change', (e) => {
+                if (!e.target || !e.target.matches) return;
+                if (e.target.matches('#subjectTable input[type="checkbox"]')) {
+                    setTimeout(() => updateSelectedCounter(), 0);
                 }
             });
+        }
 
-            // Cargar selecciones previas guardadas en localStorage
-            loadSavedMappingsFromStorage();
-
-            // Persistir selector de sesión en localStorage y recargar asignaciones
-            const sessionSelect = document.getElementById('zg-global-session');
-            const savedSession = localStorage.getItem('zipgrade_toolkit_session');
-            if (savedSession && sessionSelect) {
-                sessionSelect.value = savedSession;
+        document.getElementById('zg-btn-apply-checked').addEventListener('click', (e) => {
+            e.preventDefault();
+            const selectedSheet = document.getElementById('zg-bulk-apply-sheet').value;
+            if (!selectedSheet) {
+                alert('Selecciona una hoja del menú para aplicar.');
+                return;
             }
-            if (sessionSelect) {
-                sessionSelect.addEventListener('change', () => {
-                    localStorage.setItem('zipgrade_toolkit_session', sessionSelect.value);
-                    loadSavedMappingsFromStorage();
+            const checkedRows = getNativeClassChecks().filter(chk => chk.checked);
+            if (checkedRows.length === 0) {
+                alert('Marca al menos una casilla en la tabla.');
+                return;
+            }
+            checkedRows.forEach(chk => {
+                const rowSelect = chk.closest('tr').querySelector('.zg-row-sheet');
+                if (rowSelect) rowSelect.value = selectedSheet;
+            });
+            saveMappingsToStorage();
+            alert(`¡Se aplicó "${selectedSheet}" a ${checkedRows.length} cursos!`);
+        });
+
+        // Listeners JSON
+        document.getElementById('zg-btn-export-json').addEventListener('click', (e) => {
+            e.preventDefault();
+            exportConfigJSON();
+        });
+
+        document.getElementById('zg-file-input').addEventListener('change', importConfigJSON);
+
+        // Listener Descarga Lote
+        document.getElementById('zg-btn-download-selected').addEventListener('click', downloadSelectedAsZip);
+
+        // Listener Detener
+        document.getElementById('zg-btn-stop-download').addEventListener('click', (e) => {
+            e.preventDefault();
+            cancelDownloadRequested = true;
+            console.warn("🛑 [ZipGrade] Cancelación solicitada por el usuario.");
+            const btnStop = e.currentTarget;
+            btnStop.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Deteniendo...';
+            btnStop.disabled = true;
+        });
+
+        console.log("✅ [ZipGrade] UI lista para usar.");
+    } catch (e) {
+        console.error("❌ [ZipGrade] Error inicializando UI:", e);
+    }
+}
+
+function updateStatusText(msg) {
+    const el = document.getElementById('zg-status-text');
+    if (el) el.innerText = msg;
+}
+
+function setProgressBar(percent, title = "Procesando...") {
+    const container = document.getElementById('zg-progress-container');
+    const titleEl = document.getElementById('zg-progress-title');
+    const percentEl = document.getElementById('zg-progress-percent');
+    const barEl = document.getElementById('zg-progress-bar');
+
+    if (container && titleEl && percentEl && barEl) {
+        container.style.display = 'flex';
+        titleEl.innerText = title;
+        percentEl.innerText = `${Math.round(percent)}%`;
+        barEl.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    }
+}
+
+function hideProgressBar() {
+    const container = document.getElementById('zg-progress-container');
+    if (container) container.style.display = 'none';
+}
+
+// Descarga simple de un blob (para PDFs individuales o JSON)
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+        if (link.parentNode) link.parentNode.removeChild(link);
+        URL.revokeObjectURL(url);
+    }, 60000);
+}
+
+
+
+// ==========================================
+// 7. FUNCIONES DE IMPORTAR / EXPORTAR JSON
+// ==========================================
+function exportConfigJSON() {
+    const session = document.getElementById('zg-global-session').value;
+    const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
+
+    const configData = { session: session, mappings: {} };
+    selects.forEach(s => {
+        if (s.value) {
+            configData.mappings[s.dataset.className] = s.value;
+        }
+    });
+
+    const blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
+    downloadBlob(blob, `config_zipgrade_${session}.json`);
+}
+
+function importConfigJSON(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const configData = JSON.parse(e.target.result);
+            if (configData.session) {
+                document.getElementById('zg-global-session').value = configData.session;
+            }
+            if (configData.mappings) {
+                const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
+                selects.forEach(s => {
+                    const courseName = s.dataset.className;
+                    if (configData.mappings[courseName]) {
+                        s.value = configData.mappings[courseName];
+                        setNativeCheckboxChecked(getNativeClassCheckbox(s.closest('tr')), true);
+                    }
                 });
-            }
-
-            // Controles de Selección
-            const setAllChecks = (state) => {
-                getNativeClassChecks().forEach(chk => setNativeCheckboxChecked(chk, state));
-                const masterChk = document.getElementById('zg-master-check');
-                if (masterChk) {
-                    masterChk.checked = state;
-                    refreshUniformVisual(masterChk);
-                }
                 updateSelectedCounter();
                 saveMappingsToStorage();
-            };
-
-            document.getElementById('zg-btn-select-all').addEventListener('click', (e) => {
-                e.preventDefault();
-                setAllChecks(true);
-            });
-
-            document.getElementById('zg-btn-deselect-all').addEventListener('click', (e) => {
-                e.preventDefault();
-                setAllChecks(false);
-            });
-
-            const masterChkEl = document.getElementById('zg-master-check');
-            if (masterChkEl) {
-                masterChkEl.addEventListener('change', (e) => {
-                    setAllChecks(e.target.checked);
-                });
-            }
-
-            // La selección NATIVA de ZipGrade (casillas de fila de #subjectTable) mantiene
-            // sincronizados el contador y el master del toolkit.
-            if (!zgClassesNativeSyncBound) {
-                zgClassesNativeSyncBound = true;
-                document.addEventListener('change', (e) => {
-                    if (!e.target || !e.target.matches) return;
-                    if (e.target.matches('#subjectTable input[type="checkbox"]')) {
-                        setTimeout(() => updateSelectedCounter(), 0);
-                    }
-                });
-            }
-
-            document.getElementById('zg-btn-apply-checked').addEventListener('click', (e) => {
-                e.preventDefault();
-                const selectedSheet = document.getElementById('zg-bulk-apply-sheet').value;
-                if (!selectedSheet) {
-                    alert('Selecciona una hoja del menú para aplicar.');
-                    return;
-                }
-                const checkedRows = getNativeClassChecks().filter(chk => chk.checked);
-                if (checkedRows.length === 0) {
-                    alert('Marca al menos una casilla en la tabla.');
-                    return;
-                }
-                checkedRows.forEach(chk => {
-                    const rowSelect = chk.closest('tr').querySelector('.zg-row-sheet');
-                    if (rowSelect) rowSelect.value = selectedSheet;
-                });
-                saveMappingsToStorage();
-                alert(`¡Se aplicó "${selectedSheet}" a ${checkedRows.length} cursos!`);
-            });
-
-            // Listeners JSON
-            document.getElementById('zg-btn-export-json').addEventListener('click', (e) => {
-                e.preventDefault();
-                exportConfigJSON();
-            });
-
-            document.getElementById('zg-file-input').addEventListener('change', importConfigJSON);
-
-            // Listener Descarga Lote
-            document.getElementById('zg-btn-download-selected').addEventListener('click', downloadSelectedAsZip);
-
-            // Listener Detener
-            document.getElementById('zg-btn-stop-download').addEventListener('click', (e) => {
-                e.preventDefault();
-                cancelDownloadRequested = true;
-                console.warn("🛑 [ZipGrade] Cancelación solicitada por el usuario.");
-                const btnStop = e.currentTarget;
-                btnStop.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Deteniendo...';
-                btnStop.disabled = true;
-            });
-
-            console.log("✅ [ZipGrade] UI lista para usar.");
-        } catch (e) {
-            console.error("❌ [ZipGrade] Error inicializando UI:", e);
-        }
-    }
-
-    function updateStatusText(msg) {
-        const el = document.getElementById('zg-status-text');
-        if (el) el.innerText = msg;
-    }
-
-    function setProgressBar(percent, title = "Procesando...") {
-        const container = document.getElementById('zg-progress-container');
-        const titleEl = document.getElementById('zg-progress-title');
-        const percentEl = document.getElementById('zg-progress-percent');
-        const barEl = document.getElementById('zg-progress-bar');
-
-        if (container && titleEl && percentEl && barEl) {
-            container.style.display = 'flex';
-            titleEl.innerText = title;
-            percentEl.innerText = `${Math.round(percent)}%`;
-            barEl.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-        }
-    }
-
-    function hideProgressBar() {
-        const container = document.getElementById('zg-progress-container');
-        if (container) container.style.display = 'none';
-    }
-
-    // Descarga simple de un blob (para PDFs individuales o JSON)
-    function downloadBlob(blob, filename) {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-            if (link.parentNode) link.parentNode.removeChild(link);
-            URL.revokeObjectURL(url);
-        }, 60000);
-    }
-
-
-
-    // ==========================================
-    // 7. FUNCIONES DE IMPORTAR / EXPORTAR JSON
-    // ==========================================
-    function exportConfigJSON() {
-        const session = document.getElementById('zg-global-session').value;
-        const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
-
-        const configData = { session: session, mappings: {} };
-        selects.forEach(s => {
-            if (s.value) {
-                configData.mappings[s.dataset.className] = s.value;
-            }
-        });
-
-        const blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
-        downloadBlob(blob, `config_zipgrade_${session}.json`);
-    }
-
-    function importConfigJSON(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            try {
-                const configData = JSON.parse(e.target.result);
-                if (configData.session) {
-                    document.getElementById('zg-global-session').value = configData.session;
-                }
-                if (configData.mappings) {
-                    const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
-                    selects.forEach(s => {
-                        const courseName = s.dataset.className;
-                        if (configData.mappings[courseName]) {
-                            s.value = configData.mappings[courseName];
-                            setNativeCheckboxChecked(getNativeClassCheckbox(s.closest('tr')), true);
-                        }
-                    });
-                    updateSelectedCounter();
-                    saveMappingsToStorage();
-                    alert('¡Configuración cargada correctamente desde el JSON!');
-                }
-            } catch (err) {
-                alert('Error al leer el archivo JSON.');
-                console.error(err);
-            }
-        };
-        reader.readAsText(file);
-    }
-
-    // ==========================================
-    // 8. DESCARGA INDIVIDUAL DE PDFs
-    // ==========================================
-    async function downloadSelectedAsZip() {
-        const session = document.getElementById('zg-global-session').value;
-        const checkedBoxes = getNativeClassChecks().filter(chk => chk.checked);
-        const queue = [];
-
-        checkedBoxes.forEach(chk => {
-            const select = chk.closest('tr').querySelector('.zg-row-sheet');
-            if (select && select.value) {
-                queue.push({
-                    classId: select.dataset.classId,
-                    className: select.dataset.className,
-                    sheetName: select.value
-                });
-            }
-        });
-
-        if (queue.length === 0) {
-            alert('Marca los cursos con el checkbox y asegúrate de que tengan una plantilla seleccionada en la columna.');
-            return;
-        }
-
-        console.log(`🚀 [ZipGrade] Descargando ${queue.length} PDFs individualmente (Sesión ${session})...`);
-        const btnDownload = document.getElementById('zg-btn-download-selected');
-        const btnStop = document.getElementById('zg-btn-stop-download');
-        const bannerEl = document.getElementById('zg-download-banner');
-
-        if (bannerEl) bannerEl.style.display = 'none';
-
-        cancelDownloadRequested = false;
-        btnDownload.disabled = true;
-
-        if (btnStop) {
-            btnStop.style.display = 'inline-block';
-            btnStop.disabled = false;
-            btnStop.innerHTML = '<i class="fa fa-stop"></i> Detener';
-        }
-
-        let successCount = 0;
-        let consecutiveErrors = 0;
-        const startTime = Date.now();
-        let totalCoolingTime = 0;
-
-        for (let i = 0; i < queue.length; i++) {
-            if (cancelDownloadRequested) {
-                console.warn('🛑 [ZipGrade] Proceso interrumpido por el usuario.');
-                updateStatusText('Proceso detenido.');
-                alert('Proceso detenido.');
-                break;
-            }
-
-            const item = queue[i];
-            const currentNum = i + 1;
-            const progressPercent = (i / queue.length) * 90;
-
-            console.log(`--------------------------------------------------`);
-            console.log(`📄 [${currentNum}/${queue.length}] Curso: ${item.className}`);
-
-            setProgressBar(progressPercent, `Descargando PDF ${currentNum}/${queue.length}: ${item.className}`);
-            updateStatusText(`Descargando ${currentNum}/${queue.length}: ${item.className}...`);
-            btnDownload.innerText = `PDF ${currentNum}/${queue.length}: ${item.className}...`;
-
-            const pdfBlob = await processSingleDownloadWithRetry(item.classId, item.className, item.sheetName, session, currentNum, queue.length);
-
-            if (pdfBlob) {
-                const filename = `${item.className}_${session}.pdf`;
-                downloadBlob(pdfBlob, filename);
-                console.log(`📥 PDF de ${item.className} descargado.`);
-                successCount++;
-                consecutiveErrors = 0;
-                await new Promise(r => setTimeout(r, 2000));
-            } else {
-                console.error(`❌ No se pudo obtener PDF para "${item.className}". Omitido.`);
-                updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
-                consecutiveErrors++;
-            }
-
-            // Pausa entre descargas + enfriamiento cada 5 (límite de velocidad ZipGrade)
-            if (i < queue.length - 1 && !cancelDownloadRequested) {
-                let pause = 3500;
-
-                if (successCount > 0 && successCount % 5 === 0 && consecutiveErrors === 0) {
-                    const coolingTime = 20000;
-                    totalCoolingTime += coolingTime;
-                    console.log(`⏳ Enfriando ${coolingTime / 1000}s tras ${successCount} descargas (límite ZipGrade)...`);
-                    updateStatusText(`⏳ Pausa de ${coolingTime / 1000}s para evitar bloqueo del servidor...`);
-                    await new Promise(r => setTimeout(r, coolingTime));
-                }
-
-                if (consecutiveErrors > 0) {
-                    pause = Math.min(10000, pause + (consecutiveErrors * 3000));
-                    console.warn(`⏱️ ${consecutiveErrors} error(es) — pausa extendida a ${pause / 1000}s`);
-                }
-                console.log(`⏱️ Pausa de ${pause / 1000}s...`);
-                await new Promise(r => setTimeout(r, pause));
-            }
-        }
-
-        hideProgressBar();
-
-        if (btnStop) {
-            btnStop.style.display = 'none';
-        }
-
-        if (successCount > 0 && !cancelDownloadRequested) {
-            const totalTime = Math.round((Date.now() - startTime) / 1000);
-            const minutes = Math.floor(totalTime / 60);
-            const secs = totalTime % 60;
-            const coolingSecs = Math.round(totalCoolingTime / 1000);
-            const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
-            const titleText = `${successCount} de ${queue.length} PDFs descargados en ${timeStr}`;
-            const summary = coolingSecs > 0
-                ? `${titleText} (${coolingSecs}s de espera por límite de velocidad)`
-                : titleText;
-
-            setProgressBar(100, summary);
-            updateStatusText(summary);
-            console.log(`🎉 [ZipGrade] ${summary}`);
-
-            const bannerTitle = document.getElementById('zg-banner-title');
-            const bannerSub = document.getElementById('zg-banner-subtitle');
-            if (bannerTitle) bannerTitle.textContent = titleText;
-            if (bannerSub) {
-                bannerSub.textContent = coolingSecs > 0
-                    ? `Procesado exitosamente con ${coolingSecs}s de pausa de enfriamiento anti-bloqueo.`
-                    : `Los PDFs se han descargado individualmente a tu carpeta de descargas.`;
-            }
-            if (bannerEl) bannerEl.style.display = 'flex';
-        } else if (!cancelDownloadRequested) {
-            console.error("❌ No se pudo obtener ningún PDF.");
-            updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
-            alert('No se pudo obtener ningún PDF. Revisa tu conexión o las plantillas seleccionadas.');
-        }
-
-        btnDownload.innerText = '📄 Descargar PDFs';
-        btnDownload.disabled = false;
-    }
-
-    // Reintentos automáticos con Backoff Adaptativo y recuperación de límite de velocidad
-    // ZipGrade bloquea tras ~5 PDFs/ventana; la ventana dura ~60s — esperar suficiente antes de reintentar
-    async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 4) {
-        // Pausas de recuperación para RATE_LIMIT_HTML: 30s, 45s, 60s
-        const rateLimitDelays = [30000, 45000, 60000];
-        // Pausas para errores genéricos de red/timeout
-        const networkDelays = [8000, 12000, 18000];
-        const timeouts = [45000, 60000, 90000, 90000];
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            if (cancelDownloadRequested) return null;
-
-            const timeoutForAttempt = timeouts[attempt - 1] || 90000;
-            console.log(`🔄 Obteniendo ${className} (Intento ${attempt}/${maxRetries}, Timeout: ${timeoutForAttempt / 1000}s)...`);
-
-            if (attempt > 1) {
-                updateStatusText(`Reintentando ${currentIdx}/${totalIdx}: ${className} (Intento ${attempt}/${maxRetries})...`);
-            }
-
-            let result;
-            try {
-                result = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
-            } catch (err) {
-                // Solo SESSION y SHEET son irrecuperables
-                if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
-                    console.warn(`⏭️ Error irrecuperable en ${className}: ${err.code}. Omitiendo.`);
-                    updateStatusText(`⏭️ ${className} omitido (${err.code})`);
-                    return null;
-                }
-                // Error de red/timeout — reintentable
-                console.warn(`⚠️ Error de red en intento ${attempt}/${maxRetries} para ${className}: ${err.message}`);
-                result = null;
-            }
-
-            // Éxito: retornar blob válido
-            if (result instanceof Blob) return result;
-
-            // Resultado con código de error
-            if (result && result.code) {
-                if (result.code === 'PERMANENT_FAILURE_SESSION') {
-                    console.warn(`⏭️ Sesión expirada para ${className}. Omitiendo.`);
-                    return null;
-                }
-
-                // RATE_LIMIT_HTML: ZipGrade bloqueó la petición — esperar la ventana completa (~60s)
-                const waitTime = rateLimitDelays[Math.min(attempt - 1, rateLimitDelays.length - 1)];
-                console.warn(`⏳ Servidor bloqueado (${result.code}) en intento ${attempt}/${maxRetries} para ${className}. Esperando ${waitTime / 1000}s para que ZipGrade libere la ventana de velocidad...`);
-                updateStatusText(`⏳ Espera ${waitTime / 1000}s — ZipGrade bloqueó temporalmente (${attempt}/${maxRetries}) para ${className}`);
-                if (!cancelDownloadRequested) await new Promise(r => setTimeout(r, waitTime));
-                continue;
-            }
-
-            // null — error genérico reintentable
-            if (attempt < maxRetries && !cancelDownloadRequested) {
-                const waitTime = networkDelays[Math.min(attempt - 1, networkDelays.length - 1)];
-                console.warn(`⚠️ Sin PDF en intento ${attempt}/${maxRetries} para ${className}. Reintentando en ${waitTime / 1000}s...`);
-                await new Promise(r => setTimeout(r, waitTime));
-            }
-        }
-
-        console.error(`❌ Todos los intentos agotados para ${className}. Omitido.`);
-        return null;
-    }
-
-    function extractCSRFToken(doc) {
-        // Probar múltiples selectores comunes de CSRF token
-        const selectores = [
-            'input[name="csrf_token"]',
-            'input[name="csrfmiddlewaretoken"]',
-            'input[name="_token"]',
-            'input[name="authenticity_token"]',
-            'meta[name="csrf-token"]',
-            'input[name="csrf"]'
-        ];
-        for (const sel of selectores) {
-            const el = doc.querySelector(sel);
-            if (el) {
-                const val = el.getAttribute('content') || el.value;
-                if (val) return val;
-            }
-        }
-        return '';
-    }
-
-    async function processSingleDownloadToZip(classId, className, sheetName, session, timeoutMs = 45000) {
-        if (cancelDownloadRequested) return null;
-
-        const targetUrl = `https://www.zipgrade.com/classes/${classId}/answerSheetPacks/`;
-
-        try {
-            const res = await customRequest({
-                method: "GET",
-                url: targetUrl
-            }, timeoutMs);
-
-            if (res.status !== 200) return null;
-
-            const doc = new DOMParser().parseFromString(res.responseText, "text/html");
-            const csrfToken = extractCSRFToken(doc);
-            const buttons = Array.from(doc.querySelectorAll('button[name="customSheet"]'));
-
-            // Detectar si la sesión expiró (página de login)
-            if (doc.querySelector('input[name="login"]') || doc.querySelector('form[action*="login"]') || !csrfToken) {
-                console.warn(`⚠️ Sesión expirada o no autenticado al acceder a ${className}.`);
-                if (!csrfToken) {
-                    // Log para depuración: mostrar parte del HTML recibido
-                    const preview = res.responseText?.substring(0, 300) || '(sin contenido)';
-                    console.warn(`🔍 HTML recibido (inicio): ${preview}`);
-                }
-                const err = new Error(`PERMANENT_FAILURE_SESSION`);
-                err.code = 'PERMANENT_FAILURE_SESSION';
-                err.className = className;
-                throw err;
-            }
-
-            const cleanTargetSheet = sheetName.trim().toLowerCase();
-
-            // Estrategia de búsqueda flexible por capas:
-            // Capa 1: Coincidencia de nombre + "1 per page" / "1 por página"
-            let targetBtn = buttons.find(b => {
-                const text = b.innerText.replace(/\s+/g, ' ').trim().toLowerCase();
-                return text.includes(cleanTargetSheet) && (text.includes('1 per page') || text.includes('1 por página'));
-            });
-
-            // Capa 2: Coincidencia exacta del nombre de plantilla en el texto del botón
-            if (!targetBtn) {
-                targetBtn = buttons.find(b => {
-                    const text = b.innerText.replace(/\s+/g, ' ').trim().toLowerCase();
-                    return text.includes(cleanTargetSheet);
-                });
-            }
-
-            // Capa 3: Coincidencia por valor o atributo
-            if (!targetBtn) {
-                targetBtn = buttons.find(b => {
-                    const val = (b.value || '').toLowerCase();
-                    return val.includes(cleanTargetSheet);
-                });
-            }
-
-            if (targetBtn && csrfToken) {
-                const form = targetBtn.closest('form');
-                const extraFields = {};
-                let formActionUrl = targetUrl;
-                if (form && form.getAttribute('action')) {
-                    formActionUrl = new URL(form.getAttribute('action'), targetUrl).href;
-                }
-                if (form) {
-                    const inputs = form.querySelectorAll('input, select, textarea');
-                    inputs.forEach(inp => {
-                        if (inp.name && inp.name !== 'customSheet' && inp.value !== undefined && !inp.disabled) {
-                            extraFields[inp.name] = inp.value;
-                        }
-                    });
-                }
-
-                let result = await fetchPDFBlob(formActionUrl, targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
-
-                // Si el primer intento devolvió HTML (RATE_LIMIT_HTML), no lanzar excepción:
-                // devolver el objeto directamente para que processSingleDownloadWithRetry reintente
-                if (result && result.code) {
-                    console.warn(`⚠️ [${className}] Servidor devolvió HTML en lugar de PDF (código: ${result.code}). Se reintentará desde el nivel superior.`);
-                    return result; // NO throw — dejar que el reintento superior maneje esto
-                }
-                return result;
-            } else {
-                console.warn(`⚠️ Plantilla "${sheetName}" no hallada en los botones de ${className}`);
-                const err = new Error(`PERMANENT_FAILURE_SHEET`);
-                err.code = 'PERMANENT_FAILURE_SHEET';
-                err.className = className;
-                throw err;
+                alert('¡Configuración cargada correctamente desde el JSON!');
             }
         } catch (err) {
-            if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
-                throw err;
+            alert('Error al leer el archivo JSON.');
+            console.error(err);
+        }
+    };
+    reader.readAsText(file);
+}
+
+// ==========================================
+// 8. DESCARGA INDIVIDUAL DE PDFs
+// ==========================================
+async function downloadSelectedAsZip() {
+    const session = document.getElementById('zg-global-session').value;
+    const checkedBoxes = getNativeClassChecks().filter(chk => chk.checked);
+    const queue = [];
+
+    checkedBoxes.forEach(chk => {
+        const select = chk.closest('tr').querySelector('.zg-row-sheet');
+        if (select && select.value) {
+            queue.push({
+                classId: select.dataset.classId,
+                className: select.dataset.className,
+                sheetName: select.value
+            });
+        }
+    });
+
+    if (queue.length === 0) {
+        alert('Marca los cursos con el checkbox y asegúrate de que tengan una plantilla seleccionada en la columna.');
+        return;
+    }
+
+    console.log(`🚀 [ZipGrade] Descargando ${queue.length} PDFs individualmente (Sesión ${session})...`);
+    const btnDownload = document.getElementById('zg-btn-download-selected');
+    const btnStop = document.getElementById('zg-btn-stop-download');
+    const bannerEl = document.getElementById('zg-download-banner');
+
+    if (bannerEl) bannerEl.style.display = 'none';
+
+    cancelDownloadRequested = false;
+    btnDownload.disabled = true;
+
+    if (btnStop) {
+        btnStop.style.display = 'inline-block';
+        btnStop.disabled = false;
+        btnStop.innerHTML = '<i class="fa fa-stop"></i> Detener';
+    }
+
+    let successCount = 0;
+    let consecutiveErrors = 0;
+    const startTime = Date.now();
+    let totalCoolingTime = 0;
+
+    for (let i = 0; i < queue.length; i++) {
+        if (cancelDownloadRequested) {
+            console.warn('🛑 [ZipGrade] Proceso interrumpido por el usuario.');
+            updateStatusText('Proceso detenido.');
+            alert('Proceso detenido.');
+            break;
+        }
+
+        const item = queue[i];
+        const currentNum = i + 1;
+        const progressPercent = (i / queue.length) * 90;
+
+        console.log(`--------------------------------------------------`);
+        console.log(`📄 [${currentNum}/${queue.length}] Curso: ${item.className}`);
+
+        setProgressBar(progressPercent, `Descargando PDF ${currentNum}/${queue.length}: ${item.className}`);
+        updateStatusText(`Descargando ${currentNum}/${queue.length}: ${item.className}...`);
+        btnDownload.innerText = `PDF ${currentNum}/${queue.length}: ${item.className}...`;
+
+        const pdfBlob = await processSingleDownloadWithRetry(item.classId, item.className, item.sheetName, session, currentNum, queue.length);
+
+        if (pdfBlob) {
+            const filename = `${item.className}_${session}.pdf`;
+            downloadBlob(pdfBlob, filename);
+            console.log(`📥 PDF de ${item.className} descargado.`);
+            successCount++;
+            consecutiveErrors = 0;
+            await new Promise(r => setTimeout(r, 2000));
+        } else {
+            console.error(`❌ No se pudo obtener PDF para "${item.className}". Omitido.`);
+            updateStatusText(`⚠️ "${item.className}" omitido — sin PDF`);
+            consecutiveErrors++;
+        }
+
+        // Pausa entre descargas + enfriamiento cada 5 (límite de velocidad ZipGrade)
+        if (i < queue.length - 1 && !cancelDownloadRequested) {
+            let pause = 3500;
+
+            if (successCount > 0 && successCount % 5 === 0 && consecutiveErrors === 0) {
+                const coolingTime = 20000;
+                totalCoolingTime += coolingTime;
+                console.log(`⏳ Enfriando ${coolingTime / 1000}s tras ${successCount} descargas (límite ZipGrade)...`);
+                updateStatusText(`⏳ Pausa de ${coolingTime / 1000}s para evitar bloqueo del servidor...`);
+                await new Promise(r => setTimeout(r, coolingTime));
             }
-            console.error(`❌ Error leyendo página de ${className}:`, err);
-            return null;
+
+            if (consecutiveErrors > 0) {
+                pause = Math.min(10000, pause + (consecutiveErrors * 3000));
+                console.warn(`⏱️ ${consecutiveErrors} error(es) — pausa extendida a ${pause / 1000}s`);
+            }
+            console.log(`⏱️ Pausa de ${pause / 1000}s...`);
+            await new Promise(r => setTimeout(r, pause));
         }
     }
 
-    async function fetchPDFBlob(postUrl, refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000, extraFields = {}, btnName = 'customSheet') {
+    hideProgressBar();
+
+    if (btnStop) {
+        btnStop.style.display = 'none';
+    }
+
+    if (successCount > 0 && !cancelDownloadRequested) {
+        const totalTime = Math.round((Date.now() - startTime) / 1000);
+        const minutes = Math.floor(totalTime / 60);
+        const secs = totalTime % 60;
+        const coolingSecs = Math.round(totalCoolingTime / 1000);
+        const timeStr = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+        const titleText = `${successCount} de ${queue.length} PDFs descargados en ${timeStr}`;
+        const summary = coolingSecs > 0
+            ? `${titleText} (${coolingSecs}s de espera por límite de velocidad)`
+            : titleText;
+
+        setProgressBar(100, summary);
+        updateStatusText(summary);
+        console.log(`🎉 [ZipGrade] ${summary}`);
+
+        const bannerTitle = document.getElementById('zg-banner-title');
+        const bannerSub = document.getElementById('zg-banner-subtitle');
+        if (bannerTitle) bannerTitle.textContent = titleText;
+        if (bannerSub) {
+            bannerSub.textContent = coolingSecs > 0
+                ? `Procesado exitosamente con ${coolingSecs}s de pausa de enfriamiento anti-bloqueo.`
+                : `Los PDFs se han descargado individualmente a tu carpeta de descargas.`;
+        }
+        if (bannerEl) bannerEl.style.display = 'flex';
+    } else if (!cancelDownloadRequested) {
+        console.error("❌ No se pudo obtener ningún PDF.");
+        updateStatusText('❌ Error: No se pudo obtener ningún PDF.');
+        alert('No se pudo obtener ningún PDF. Revisa tu conexión o las plantillas seleccionadas.');
+    }
+
+    btnDownload.innerText = '📄 Descargar PDFs';
+    btnDownload.disabled = false;
+}
+
+// Reintentos automáticos con Backoff Adaptativo y recuperación de límite de velocidad
+// ZipGrade bloquea tras ~5 PDFs/ventana; la ventana dura ~60s — esperar suficiente antes de reintentar
+async function processSingleDownloadWithRetry(classId, className, sheetName, session, currentIdx = 1, totalIdx = 1, maxRetries = 4) {
+    // Pausas de recuperación para RATE_LIMIT_HTML: 30s, 45s, 60s
+    const rateLimitDelays = [30000, 45000, 60000];
+    // Pausas para errores genéricos de red/timeout
+    const networkDelays = [8000, 12000, 18000];
+    const timeouts = [45000, 60000, 90000, 90000];
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (cancelDownloadRequested) return null;
 
-        const formData = new URLSearchParams();
-        formData.append(btnName, customSheetValue);
-        if (!formData.has('csrf_token') && csrfToken) {
-            formData.append('csrf_token', csrfToken);
+        const timeoutForAttempt = timeouts[attempt - 1] || 90000;
+        console.log(`🔄 Obteniendo ${className} (Intento ${attempt}/${maxRetries}, Timeout: ${timeoutForAttempt / 1000}s)...`);
+
+        if (attempt > 1) {
+            updateStatusText(`Reintentando ${currentIdx}/${totalIdx}: ${className} (Intento ${attempt}/${maxRetries})...`);
         }
-        for (const [key, val] of Object.entries(extraFields)) {
-            if (!formData.has(key)) formData.append(key, val);
-        }
-        if (!formData.has('quizName')) formData.append('quizName', '');
-        formData.set('sortOrder', 'studentId');
 
-        const bodyStr = formData.toString();
-
-        // Intentar con fetch (credentials: 'include' para cookies de sesión)
-        const result = await attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
-        if (result === 'RETRY_GM') {
-            // Fallback: GM_xmlhttpRequest
-            console.warn(`🔄 Reintentando con GM_xmlhttpRequest para ${className}...`);
-            return await attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
-        }
-        return result;
-    }
-
-    async function attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
+        let result;
         try {
-            const resp = await fetch(postUrl, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer": refererUrl,
-                    "Origin": "https://www.zipgrade.com"
-                },
-                body: bodyStr,
-                credentials: 'include',
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
+            result = await processSingleDownloadToZip(classId, className, sheetName, session, timeoutForAttempt);
+        } catch (err) {
+            // Solo SESSION y SHEET son irrecuperables
+            if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+                console.warn(`⏭️ Error irrecuperable en ${className}: ${err.code}. Omitiendo.`);
+                updateStatusText(`⏭️ ${className} omitido (${err.code})`);
+                return null;
+            }
+            // Error de red/timeout — reintentable
+            console.warn(`⚠️ Error de red en intento ${attempt}/${maxRetries} para ${className}: ${err.message}`);
+            result = null;
+        }
 
-            if (!resp.ok) {
-                console.warn(`⚠️ fetch HTTP ${resp.status} para ${className}`);
+        // Éxito: retornar blob válido
+        if (result instanceof Blob) return result;
+
+        // Resultado con código de error
+        if (result && result.code) {
+            if (result.code === 'PERMANENT_FAILURE_SESSION') {
+                console.warn(`⏭️ Sesión expirada para ${className}. Omitiendo.`);
                 return null;
             }
 
-            const blob = await resp.blob();
-            return validatePDFBlob(blob, className, resp.status);
-        } catch (err) {
-            clearTimeout(timeoutId);
-            if (err.name === 'AbortError') {
-                console.warn(`⚠️ fetch timeout (${timeoutMs / 1000}s) para ${className}`);
-                return 'RETRY_GM';
-            }
-            console.warn(`⚠️ fetch error para ${className}: ${err.message}`);
-            return 'RETRY_GM';
+            // RATE_LIMIT_HTML: ZipGrade bloqueó la petición — esperar la ventana completa (~60s)
+            const waitTime = rateLimitDelays[Math.min(attempt - 1, rateLimitDelays.length - 1)];
+            console.warn(`⏳ Servidor bloqueado (${result.code}) en intento ${attempt}/${maxRetries} para ${className}. Esperando ${waitTime / 1000}s para que ZipGrade libere la ventana de velocidad...`);
+            updateStatusText(`⏳ Espera ${waitTime / 1000}s — ZipGrade bloqueó temporalmente (${attempt}/${maxRetries}) para ${className}`);
+            if (!cancelDownloadRequested) await new Promise(r => setTimeout(r, waitTime));
+            continue;
+        }
+
+        // null — error genérico reintentable
+        if (attempt < maxRetries && !cancelDownloadRequested) {
+            const waitTime = networkDelays[Math.min(attempt - 1, networkDelays.length - 1)];
+            console.warn(`⚠️ Sin PDF en intento ${attempt}/${maxRetries} para ${className}. Reintentando en ${waitTime / 1000}s...`);
+            await new Promise(r => setTimeout(r, waitTime));
         }
     }
 
-    async function attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
-        return new Promise(resolve => {
-            if (typeof GM_xmlhttpRequest === 'undefined') {
-                resolve(null);
-                return;
+    console.error(`❌ Todos los intentos agotados para ${className}. Omitido.`);
+    return null;
+}
+
+function extractCSRFToken(doc) {
+    // Probar múltiples selectores comunes de CSRF token
+    const selectores = [
+        'input[name="csrf_token"]',
+        'input[name="csrfmiddlewaretoken"]',
+        'input[name="_token"]',
+        'input[name="authenticity_token"]',
+        'meta[name="csrf-token"]',
+        'input[name="csrf"]'
+    ];
+    for (const sel of selectores) {
+        const el = doc.querySelector(sel);
+        if (el) {
+            const val = el.getAttribute('content') || el.value;
+            if (val) return val;
+        }
+    }
+    return '';
+}
+
+async function processSingleDownloadToZip(classId, className, sheetName, session, timeoutMs = 45000) {
+    if (cancelDownloadRequested) return null;
+
+    const targetUrl = `https://www.zipgrade.com/classes/${classId}/answerSheetPacks/`;
+
+    try {
+        const res = await customRequest({
+            method: "GET",
+            url: targetUrl
+        }, timeoutMs);
+
+        if (res.status !== 200) return null;
+
+        const doc = new DOMParser().parseFromString(res.responseText, "text/html");
+        const csrfToken = extractCSRFToken(doc);
+        const buttons = Array.from(doc.querySelectorAll('button[name="customSheet"]'));
+
+        // Detectar si la sesión expiró (página de login)
+        if (doc.querySelector('input[name="login"]') || doc.querySelector('form[action*="login"]') || !csrfToken) {
+            console.warn(`⚠️ Sesión expirada o no autenticado al acceder a ${className}.`);
+            if (!csrfToken) {
+                // Log para depuración: mostrar parte del HTML recibido
+                const preview = res.responseText?.substring(0, 300) || '(sin contenido)';
+                console.warn(`🔍 HTML recibido (inicio): ${preview}`);
+            }
+            const err = new Error(`PERMANENT_FAILURE_SESSION`);
+            err.code = 'PERMANENT_FAILURE_SESSION';
+            err.className = className;
+            throw err;
+        }
+
+        const cleanTargetSheet = sheetName.trim().toLowerCase();
+
+        // Estrategia de búsqueda flexible por capas:
+        // Capa 1: Coincidencia de nombre + "1 per page" / "1 por página"
+        let targetBtn = buttons.find(b => {
+            const text = b.innerText.replace(/\s+/g, ' ').trim().toLowerCase();
+            return text.includes(cleanTargetSheet) && (text.includes('1 per page') || text.includes('1 por página'));
+        });
+
+        // Capa 2: Coincidencia exacta del nombre de plantilla en el texto del botón
+        if (!targetBtn) {
+            targetBtn = buttons.find(b => {
+                const text = b.innerText.replace(/\s+/g, ' ').trim().toLowerCase();
+                return text.includes(cleanTargetSheet);
+            });
+        }
+
+        // Capa 3: Coincidencia por valor o atributo
+        if (!targetBtn) {
+            targetBtn = buttons.find(b => {
+                const val = (b.value || '').toLowerCase();
+                return val.includes(cleanTargetSheet);
+            });
+        }
+
+        if (targetBtn && csrfToken) {
+            const form = targetBtn.closest('form');
+            const extraFields = {};
+            let formActionUrl = targetUrl;
+            if (form && form.getAttribute('action')) {
+                formActionUrl = new URL(form.getAttribute('action'), targetUrl).href;
+            }
+            if (form) {
+                const inputs = form.querySelectorAll('input, select, textarea');
+                inputs.forEach(inp => {
+                    if (inp.name && inp.name !== 'customSheet' && inp.value !== undefined && !inp.disabled) {
+                        extraFields[inp.name] = inp.value;
+                    }
+                });
             }
 
-            let settled = false;
-            const timer = setTimeout(() => {
-                if (!settled) { settled = true; resolve(null); }
-            }, timeoutMs);
+            let result = await fetchPDFBlob(formActionUrl, targetUrl, targetBtn.value, csrfToken, className, timeoutMs, extraFields, targetBtn.name || 'customSheet');
 
-            GM_xmlhttpRequest({
-                method: "POST",
-                url: postUrl,
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer": refererUrl,
-                    "Origin": "https://www.zipgrade.com"
-                },
-                data: bodyStr,
-                anonymous: false,
-                responseType: 'blob',
-                onload: async (res) => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-
-                    let blob = res.response;
-                    if (blob instanceof ArrayBuffer) {
-                        blob = new Blob([blob], { type: 'application/pdf' });
-                    }
-                    if (!(blob instanceof Blob) || blob.size === 0) {
-                        resolve(null);
-                        return;
-                    }
-                    const validated = await validatePDFBlob(blob, className, res.status);
-                    resolve(validated);
-                },
-                onerror: () => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    resolve(null);
-                },
-                ontimeout: () => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    resolve(null);
-                }
-            });
-        });
+            // Si el primer intento devolvió HTML (RATE_LIMIT_HTML), no lanzar excepción:
+            // devolver el objeto directamente para que processSingleDownloadWithRetry reintente
+            if (result && result.code) {
+                console.warn(`⚠️ [${className}] Servidor devolvió HTML en lugar de PDF (código: ${result.code}). Se reintentará desde el nivel superior.`);
+                return result; // NO throw — dejar que el reintento superior maneje esto
+            }
+            return result;
+        } else {
+            console.warn(`⚠️ Plantilla "${sheetName}" no hallada en los botones de ${className}`);
+            const err = new Error(`PERMANENT_FAILURE_SHEET`);
+            err.code = 'PERMANENT_FAILURE_SHEET';
+            err.className = className;
+            throw err;
+        }
+    } catch (err) {
+        if (err.code === 'PERMANENT_FAILURE_SESSION' || err.code === 'PERMANENT_FAILURE_SHEET') {
+            throw err;
+        }
+        console.error(`❌ Error leyendo página de ${className}:`, err);
+        return null;
     }
+}
 
-    async function validatePDFBlob(blob, className, statusCode) {
-        if (!(blob instanceof Blob) || blob.size === 0) return null;
-        if (blob.size <= 500) {
-            console.warn(`⚠️ PDF muy pequeño (${blob.size}B) para ${className}`);
+async function fetchPDFBlob(postUrl, refererUrl, customSheetValue, csrfToken, className, timeoutMs = 60000, extraFields = {}, btnName = 'customSheet') {
+    if (cancelDownloadRequested) return null;
+
+    const formData = new URLSearchParams();
+    formData.append(btnName, customSheetValue);
+    if (!formData.has('csrf_token') && csrfToken) {
+        formData.append('csrf_token', csrfToken);
+    }
+    for (const [key, val] of Object.entries(extraFields)) {
+        if (!formData.has(key)) formData.append(key, val);
+    }
+    if (!formData.has('quizName')) formData.append('quizName', '');
+    formData.set('sortOrder', 'studentId');
+
+    const bodyStr = formData.toString();
+
+    // Intentar con fetch (credentials: 'include' para cookies de sesión)
+    const result = await attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
+    if (result === 'RETRY_GM') {
+        // Fallback: GM_xmlhttpRequest
+        console.warn(`🔄 Reintentando con GM_xmlhttpRequest para ${className}...`);
+        return await attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
+    }
+    return result;
+}
+
+async function attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const resp = await fetch(postUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": refererUrl,
+                "Origin": "https://www.zipgrade.com"
+            },
+            body: bodyStr,
+            credentials: 'include',
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!resp.ok) {
+            console.warn(`⚠️ fetch HTTP ${resp.status} para ${className}`);
             return null;
         }
-        try {
-            const headerText = await blob.slice(0, 50).text();
-            if (headerText.startsWith("%PDF")) return blob;
 
-            if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
-                const fullPreview = await blob.slice(0, 1200).text();
-                const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
-                const title = titleMatch ? titleMatch[1].trim() : '';
-
-                if (title.toLowerCase().includes('login') || fullPreview.includes('name="login"')) {
-                    console.warn(`⚠️ Sesión expirada al validar PDF para ${className}`);
-                    return { code: 'PERMANENT_FAILURE_SESSION' };
-                }
-
-                console.warn(`⚠️ El servidor devolvió HTML (Título: "${title}") en lugar de PDF para ${className}. Posible límite de velocidad.`);
-                return { code: 'RATE_LIMIT_HTML' };
-            }
-        } catch (e) { }
-        return blob;
+        const blob = await resp.blob();
+        return validatePDFBlob(blob, className, resp.status);
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            console.warn(`⚠️ fetch timeout (${timeoutMs / 1000}s) para ${className}`);
+            return 'RETRY_GM';
+        }
+        console.warn(`⚠️ fetch error para ${className}: ${err.message}`);
+        return 'RETRY_GM';
     }
+}
 
-    // Auto-inicialización según URL
-    if (window.location.pathname.includes('/classes/')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initUI);
-        } else {
-            initUI();
+async function attemptGMXHRPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
+    return new Promise(resolve => {
+        if (typeof GM_xmlhttpRequest === 'undefined') {
+            resolve(null);
+            return;
         }
-    } else if (window.location.pathname.includes('/students/')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initStudentsPage);
-        } else {
-            initStudentsPage();
+
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (!settled) { settled = true; resolve(null); }
+        }, timeoutMs);
+
+        GM_xmlhttpRequest({
+            method: "POST",
+            url: postUrl,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": refererUrl,
+                "Origin": "https://www.zipgrade.com"
+            },
+            data: bodyStr,
+            anonymous: false,
+            responseType: 'blob',
+            onload: async (res) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+
+                let blob = res.response;
+                if (blob instanceof ArrayBuffer) {
+                    blob = new Blob([blob], { type: 'application/pdf' });
+                }
+                if (!(blob instanceof Blob) || blob.size === 0) {
+                    resolve(null);
+                    return;
+                }
+                const validated = await validatePDFBlob(blob, className, res.status);
+                resolve(validated);
+            },
+            onerror: () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(null);
+            },
+            ontimeout: () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(null);
+            }
+        });
+    });
+}
+
+async function validatePDFBlob(blob, className, statusCode) {
+    if (!(blob instanceof Blob) || blob.size === 0) return null;
+    if (blob.size <= 500) {
+        console.warn(`⚠️ PDF muy pequeño (${blob.size}B) para ${className}`);
+        return null;
+    }
+    try {
+        const headerText = await blob.slice(0, 50).text();
+        if (headerText.startsWith("%PDF")) return blob;
+
+        if (headerText.includes("<!DOCTYPE") || headerText.includes("<html")) {
+            const fullPreview = await blob.slice(0, 1200).text();
+            const titleMatch = fullPreview.match(/<title>([^<]*)<\/title>/i);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+
+            if (title.toLowerCase().includes('login') || fullPreview.includes('name="login"')) {
+                console.warn(`⚠️ Sesión expirada al validar PDF para ${className}`);
+                return { code: 'PERMANENT_FAILURE_SESSION' };
+            }
+
+            console.warn(`⚠️ El servidor devolvió HTML (Título: "${title}") en lugar de PDF para ${className}. Posible límite de velocidad.`);
+            return { code: 'RATE_LIMIT_HTML' };
         }
-    } else if (window.location.pathname.includes('/quizzes')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizzesPage);
-        } else {
-            initQuizzesPage();
-        }
-    } else if (window.location.pathname.includes('/newQuiz/edit/') || (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/edit/'))) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizEditPage);
-        } else {
-            initQuizEditPage();
-        }
+    } catch (e) { }
+    return blob;
+}
+
+// Auto-inicialización según URL
+if (window.location.pathname.includes('/classes/')) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initUI);
+    } else {
+        initUI();
+    }
+} else if (window.location.pathname.includes('/students/')) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initStudentsPage);
+    } else {
+        initStudentsPage();
+    }
+} else if (window.location.pathname.includes('/quizzes')) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initQuizzesPage);
+    } else {
+        initQuizzesPage();
+    }
+} else if (window.location.pathname.includes('/newQuiz/edit/') || (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/edit/'))) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initQuizEditPage);
+    } else {
+        initQuizEditPage();
+    }
     } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initQuizDetailPage);
@@ -5368,4 +5386,4 @@
             initQuizDetailPage();
         }
     }
-})();// MARKER-TEST-123
+})();
