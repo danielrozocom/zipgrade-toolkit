@@ -1730,10 +1730,10 @@
         try {
             clearQuizStatusCache();
             await initQuizStatusColumn(true);
-            showZgToast('Estados actualizados', 'success');
+            showZgToast('Status actualizado', 'success');
         } catch (err) {
-            console.error('❌ [ZipGrade] Error al refrescar los estados:', err);
-            showZgToast('Error al refrescar los estados', 'error');
+            console.error('❌ [ZipGrade] Error al refrescar el status:', err);
+            showZgToast('Error al refrescar el status', 'error');
         } finally {
             if (btn) {
                 delete btn.dataset.zgRefreshing;
@@ -1795,8 +1795,8 @@
             th.style.cssText = 'vertical-align:middle; text-align:center; width:90px; color:#ffffff;';
             th.innerHTML = `
                 <div style="display:inline-flex; align-items:center; gap:6px;">
-                    <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Estado</span>
-                    <button type="button" class="zg-status-refresh-btn" title="Actualizar el estado de todos los quizzes" style="background:none; border:none; padding:0; margin:0; cursor:pointer; color:#cbd5e1; font-size:13px; line-height:1;">
+                    <span style="font-family:'Open Sans', sans-serif; font-weight:300; font-size:17px; line-height:19px; color:#ffffff;">Status</span>
+                    <button type="button" class="zg-status-refresh-btn" title="Actualizar el status de todos los quizzes" style="background:none; border:none; padding:0; margin:0; cursor:pointer; color:#cbd5e1; font-size:13px; line-height:1;">
                         <i class="fa fa-refresh"></i>
                     </button>
                 </div>
