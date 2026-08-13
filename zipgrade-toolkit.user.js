@@ -2202,7 +2202,7 @@
     // Renderiza el badge de estado de la key en la celda.
     function renderKeyStatus(el, state) {
         if (state === true) {
-            el.textContent = '✔ Key';
+            el.textContent = '✔ Key cargada';
             el.style.color = '#10b981';
             el.title = 'Key cargada';
         } else if (state === false) {
@@ -2251,7 +2251,7 @@
 
             td.innerHTML = `
                 <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                    <button class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV)">
+                    <button class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV) o arrastrar el archivo aquí">
                         <i class="fa fa-upload"></i> Key
                     </button>
                     <input type="file" class="zg-key-file" accept=".csv,text/csv" style="display:none;" />
@@ -2269,24 +2269,20 @@
 
             if (quizId) jobs.push({ statusEl, quizId });
 
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                fileInput.value = '';
-                fileInput.click();
-            });
-
-            fileInput.addEventListener('change', async () => {
-                const file = fileInput.files && fileInput.files[0];
+            let uploading = false;
+            async function handleKeyFile(file) {
                 if (!file) return;
+                if (uploading) return;
+                uploading = true;
                 btn.disabled = true;
                 btn.style.opacity = '0.5';
-                statusEl.textContent = 'Subiendo...';
+                statusEl.textContent = 'Subiendo ' + file.name + '...';
                 statusEl.style.color = '#2563eb';
                 try {
                     const result = await uploadAnswerKeyCsv(quizAllBaseUrl, file);
                     if (result.ok) {
                         renderKeyStatus(statusEl, true);
-                        showZgToast('✔ Claves importadas correctamente.', 'success');
+                        showZgToast('✔ Claves importadas correctamente desde ' + file.name + '.', 'success');
                     } else {
                         const errMsg = cleanKeyFlashMsg(result.message);
                         statusEl.title = errMsg;
@@ -2297,10 +2293,43 @@
                     statusEl.title = errMsg;
                     showZgToast('✘ ' + errMsg, 'error');
                 } finally {
+                    uploading = false;
                     btn.disabled = false;
                     btn.style.opacity = '1';
                     fileInput.value = '';
                 }
+            }
+
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                fileInput.value = '';
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files && fileInput.files[0];
+                handleKeyFile(file);
+            });
+
+            td.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                td.style.outline = '2px dashed #2563eb';
+                td.style.outlineOffset = '-2px';
+            });
+
+            td.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                td.style.outline = '';
+            });
+
+            td.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                td.style.outline = '';
+                const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                handleKeyFile(file);
             });
         });
 
