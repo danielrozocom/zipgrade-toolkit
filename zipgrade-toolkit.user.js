@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      28.5
+// @version      28.6
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -412,7 +412,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '27.6';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.6';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1136,10 +1136,10 @@
                         <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
                             <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
                         </span>
-                        <button id="zg-quiz-btn-select-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                        <button id="zg-quiz-btn-select-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
                             <i class="fa fa-check-square-o"></i> Seleccionar Todo
                         </button>
-                        <button id="zg-quiz-btn-deselect-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                        <button id="zg-quiz-btn-deselect-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
                             <i class="fa fa-square-o"></i> Deseleccionar Todo
                         </button>
                     </div>
@@ -1159,10 +1159,10 @@
                 <!-- Fila 2: Acción principal + estado -->
                 <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                        <button id="zg-btn-quiz-copy-selected" style="background:#f59e0b; color:#ffffff; border:none; padding:8px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(245,158,11,0.25); transition:all 0.2s;">
+                        <button id="zg-btn-quiz-copy-selected" type="button" style="background:#f59e0b; color:#ffffff; border:none; padding:8px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(245,158,11,0.25); transition:all 0.2s;">
                             <i class="fa fa-copy"></i> Copiar Seleccionados
                         </button>
-                        <button id="zg-btn-quiz-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                        <button id="zg-btn-quiz-download-selected" type="button" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
                             <i class="fa fa-download"></i> Descargar Resultados
                         </button>
                     </div>
@@ -1181,7 +1181,7 @@
                         <div id="zg-quiz-progress-bar" style="width:0%; background:#2563eb; height:100%; transition:width 0.3s ease;"></div>
                     </div>
                     <div style="display:flex; justify-content:flex-end;">
-                        <button id="zg-quiz-btn-stop" style="background:#ef4444; color:#ffffff; border:none; padding:4px 14px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+                        <button id="zg-quiz-btn-stop" type="button" style="background:#ef4444; color:#ffffff; border:none; padding:4px 14px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
                             <i class="fa fa-stop"></i> Detener
                         </button>
                     </div>
@@ -1980,10 +1980,10 @@
 
             td.innerHTML = `
                 <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
-                    <button class="zg-btn-quiz-copy btn btn-default btn-xs" style="padding:3px 8px;" title="Copiar quiz (modal)">
-                        <i class="fa fa-copy"></i>
+                    <button type="button" class="zg-btn-quiz-copy btn btn-default btn-xs" style="padding:3px 8px;" title="Copiar quiz (modal)">
+                        <i class="fa fa-files-o"></i>
                     </button>
-                    <button class="zg-btn-quiz-edit btn btn-default btn-xs" style="padding:3px 8px;" title="Editar quiz (modal)">
+                    <button type="button" class="zg-btn-quiz-edit btn btn-default btn-xs" style="padding:3px 8px;" title="Editar quiz (modal)">
                         <i class="fa fa-pencil"></i>
                     </button>
                 </div>
@@ -2251,7 +2251,7 @@
 
             td.innerHTML = `
                 <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                    <button class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV) o arrastrar el archivo aquí">
+                    <button type="button" class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV) o arrastrar el archivo aquí">
                         <i class="fa fa-upload"></i> Key
                     </button>
                     <input type="file" class="zg-key-file" accept=".csv,text/csv" style="display:none;" />
@@ -2439,8 +2439,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-copy-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-copy-accept" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-copy"></i> Copiar</button>
+                <button id="zg-copy-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-copy-accept" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-copy"></i> Copiar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -2563,12 +2563,13 @@
         acceptBtn.title = 'Cargando información del quiz...';
 
         const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', cleanup);
+        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
         const firstSlotName = slotsBox.querySelector('.zg-copy-slot-name');
         if (firstSlotName) { firstSlotName.focus(); firstSlotName.select(); }
 
-        acceptBtn.addEventListener('click', async () => {
+        acceptBtn.addEventListener('click', async (e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
             if (!formAction) {
                 alert('Aún se está cargando la información del quiz. Inténtalo en un momento.');
                 return;
@@ -2850,7 +2851,7 @@
                 <select id="zg-bulk-copy-apply-all" disabled style="flex:1; min-width:140px; padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff;">
                     <option value="">Cargando clases...</option>
                 </select>
-                <button id="zg-bulk-auto-next-all" disabled class="btn btn-default btn-xs" style="white-space:nowrap; border-radius:6px; font-size:11px; color:#7c3aed; border-color:#c4b5fd; font-weight:600;">&#10024; Auto-sig. a todos</button>
+                <button id="zg-bulk-auto-next-all" type="button" disabled class="btn btn-default btn-xs" style="white-space:nowrap; border-radius:6px; font-size:11px; color:#7c3aed; border-color:#c4b5fd; font-weight:600;">&#10024; Auto-sig. a todos</button>
             </div>
             <div id="zg-bulk-copy-rows" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; min-height:0;"></div>
             <div id="zg-bulk-copy-progress" style="display:none; flex-direction:column; gap:4px; margin-top:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; flex-shrink:0;">
@@ -2863,8 +2864,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-shrink:0;">
-                <button id="zg-bulk-copy-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-bulk-copy-accept" class="btn btn-primary btn-sm" disabled style="border-radius:6px; opacity:0.5;"><i class="fa fa-copy"></i> Copiar</button>
+                <button id="zg-bulk-copy-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-bulk-copy-accept" type="button" class="btn btn-primary btn-sm" disabled style="border-radius:6px; opacity:0.5;"><i class="fa fa-copy"></i> Copiar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -2874,7 +2875,7 @@
         const acceptBtn = modal.querySelector('#zg-bulk-copy-accept');
         const cancelBtn = modal.querySelector('#zg-bulk-copy-cancel');
         const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', cleanup);
+        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 
         const computeCopyName = (quizName, className) => {
@@ -3093,7 +3094,8 @@
             // Botón "Auto-sig. a todos" - Toggle: aplicar/des-aplicar auto-siguiente a todos
             const autoNextAllBtn = modal.querySelector('#zg-bulk-auto-next-all');
             autoNextAllBtn.disabled = false;
-            autoNextAllBtn.addEventListener('click', () => {
+            autoNextAllBtn.addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 const isActive = autoNextAllBtn.dataset.active === 'true';
                 if (!isActive) {
                     // Aplicar auto-siguiente a TODOS los quizzes
@@ -3145,7 +3147,8 @@
 
         })();
 
-        acceptBtn.addEventListener('click', async () => {
+        acceptBtn.addEventListener('click', async (e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
             // Recolectar pares (quiz, clase) a copiar
             const toCopy = [];
             Array.from(rowsBox.querySelectorAll('.zg-bulk-quiz-card')).forEach((card, i) => {
@@ -3283,8 +3286,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-edit-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-edit-save" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-save"></i> Guardar</button>
+                <button id="zg-edit-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                <button id="zg-edit-save" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-save"></i> Guardar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -3420,10 +3423,11 @@
 
         const cancelBtn = modal.querySelector('#zg-edit-cancel');
         const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', cleanup);
+        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 
-        saveBtn.addEventListener('click', async () => {
+        saveBtn.addEventListener('click', async (e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
             const nameVal = nameInput.value.trim();
             if (!nameVal) {
                 alert('El nombre del quiz no puede estar vacío.');
@@ -3677,6 +3681,7 @@
 
             // Botón de descarga individual a la DERECHA del selector (mismo orden que /classes/)
             const dlBtn = document.createElement('button');
+            dlBtn.type = 'button';
             dlBtn.className = 'zg-btn-quiz-download btn btn-default btn-xs';
             dlBtn.style.cssText = 'padding:3px 8px;';
             dlBtn.title = 'Descargar resultados de este quiz (formato personalizado)';
@@ -3827,7 +3832,8 @@
     }
 
     // Descarga masiva de resultados para los quizzes marcados en /quizzes/
-    async function downloadSelectedQuizResults(bulkBtn) {
+    async function downloadSelectedQuizResults(bulkBtn, e) {
+        if (e && e.preventDefault) { e.preventDefault(); e.stopPropagation(); }
         const quizzes = getSelectedQuizzes();
         if (quizzes.length === 0) {
             alert('Marca al menos un quiz usando las casillas de la tabla (primera columna).');
@@ -3841,7 +3847,8 @@
         const stopBtn = document.getElementById('zg-quiz-btn-stop');
         if (stopBtn && !stopBtn.dataset.zgBound) {
             stopBtn.dataset.zgBound = 'true';
-            stopBtn.addEventListener('click', () => {
+            stopBtn.addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 zgQuizDownloadCancelRequested = true;
                 updateQuizStatusText('Deteniendo el lote tras el quiz en curso...');
             });
@@ -4499,17 +4506,18 @@
                     </div>
                 </div>
                 <div style="display:flex; justify-content:flex-end; gap:8px;">
-                    <button id="zg-export-cancel" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                    <button id="zg-export-accept" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-download"></i> Descargar</button>
+                    <button id="zg-export-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
+                    <button id="zg-export-accept" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-download"></i> Descargar</button>
                 </div>
             `;
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
 
             const cleanup = (val) => { overlay.remove(); resolve(val); };
-            modal.querySelector('#zg-export-cancel').addEventListener('click', () => cleanup(null));
+            modal.querySelector('#zg-export-cancel').addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(null); });
             overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
-            modal.querySelector('#zg-export-accept').addEventListener('click', () => {
+            modal.querySelector('#zg-export-accept').addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 const idx = parseInt(modal.querySelector('#zg-export-format-select').value, 10);
                 const type = modal.querySelector('input[name="zg-export-type"]:checked')?.value || 'XLSX';
                 cleanup({ format: formats[idx], type });
@@ -4727,10 +4735,10 @@
                             <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
                                 <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
                             </span>
-                            <button id="zg-btn-select-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <button id="zg-btn-select-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
                                 <i class="fa fa-check-square-o"></i> Seleccionar Todo
                             </button>
-                            <button id="zg-btn-deselect-all" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <button id="zg-btn-deselect-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
                                 <i class="fa fa-square-o"></i> Deseleccionar Todo
                             </button>
                         </div>
@@ -4750,13 +4758,13 @@
                                     <option value="">-- Seleccionar Hoja --</option>
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
                                 </select>
-                                <button id="zg-btn-apply-checked" class="btn btn-primary btn-xs" style="font-size:11px; font-weight:600; border-radius:4px; padding:4px 10px;">
+                                <button id="zg-btn-apply-checked" type="button" class="btn btn-primary btn-xs" style="font-size:11px; font-weight:600; border-radius:4px; padding:4px 10px;">
                                     <i class="fa fa-check"></i> Aplicar a Marcados
                                 </button>
                             </div>
 
                             <div style="display:flex; align-items:center; gap:6px; border-left: 1px solid #e2e8f0; padding-left:12px;">
-                                <button id="zg-btn-export-json" class="btn btn-default btn-xs" style="font-size:11px; border-radius:4px;" title="Exportar asignaciones a JSON">
+                                <button id="zg-btn-export-json" type="button" class="btn btn-default btn-xs" style="font-size:11px; border-radius:4px;" title="Exportar asignaciones a JSON">
                                     <i class="fa fa-upload"></i> Exportar Config
                                 </button>
                                 <label id="zg-label-import-json" class="btn btn-default btn-xs" style="font-size:11px; margin:0; cursor:pointer; font-weight:normal; border-radius:4px;" title="Cargar asignaciones desde JSON">
@@ -4770,10 +4778,10 @@
                     <!-- Fila 2: Acciones Principales y Botón Detener -->
                     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
-                            <button id="zg-btn-download-selected" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                            <button id="zg-btn-download-selected" type="button" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
                                 <i class="fa fa-download"></i> Descargar PDFs
                             </button>
-                            <button id="zg-btn-stop-download" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
+                            <button id="zg-btn-stop-download" type="button" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
                                 <i class="fa fa-stop-circle"></i> Detener
                             </button>
                         </div>
@@ -4831,7 +4839,7 @@
                                     <option value="">-- Seleccionar --</option>
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
                                 </select>
-                                <button class="zg-btn-row-download btn btn-default btn-xs" style="padding:3px 8px;" title="Descargar PDF individual">
+                                <button type="button" class="zg-btn-row-download btn btn-default btn-xs" style="padding:3px 8px;" title="Descargar PDF individual">
                                     <span class="glyphicon glyphicon-download-alt"></span>
                                 </button>
                             </div>
@@ -4979,11 +4987,14 @@
             document.getElementById('zg-file-input').addEventListener('change', importConfigJSON);
 
             // Listener Descarga Lote
-            document.getElementById('zg-btn-download-selected').addEventListener('click', downloadSelectedAsZip);
+            document.getElementById('zg-btn-download-selected').addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
+                downloadSelectedAsZip(e);
+            });
 
             // Listener Detener
             document.getElementById('zg-btn-stop-download').addEventListener('click', (e) => {
-                e.preventDefault();
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 cancelDownloadRequested = true;
                 console.warn("🛑 [ZipGrade] Cancelación solicitada por el usuario.");
                 const btnStop = e.currentTarget;
@@ -5091,7 +5102,8 @@
     // ==========================================
     // 8. DESCARGA INDIVIDUAL DE PDFs
     // ==========================================
-    async function downloadSelectedAsZip() {
+    async function downloadSelectedAsZip(e) {
+        if (e && e.preventDefault) { e.preventDefault(); e.stopPropagation(); }
         const session = document.getElementById('zg-global-session').value;
         const checkedBoxes = getNativeClassChecks().filter(chk => chk.checked);
         const queue = [];
