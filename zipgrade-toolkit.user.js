@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      28.6
+// @version      28.7
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -54,6 +54,15 @@
             .zg-counter-badge.zg-badge-on-light.zg-badge-active {
                 background: #2563eb;
                 color: #ffffff;
+            }
+            .zg-quiz-single-status-refresh {
+                opacity: 0.55;
+                transition: opacity 0.15s ease, color 0.15s ease, transform 0.15s ease;
+            }
+            .zg-quiz-single-status-refresh:hover {
+                opacity: 1;
+                color: #2563eb !important;
+                transform: scale(1.2);
             }
             #quizTable thead th,
             #quizTable thead td,
@@ -412,7 +421,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.6';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.7';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1687,19 +1696,42 @@
         let pct = 0;
         if (total > 0) pct = Math.round((scanned / total) * 100);
         let color = '#ef4444'; // rojo por defecto si total es 0 o % bajo
+        let tooltipText = '';
+
         if (total > 0) {
-            if (pct >= 100) color = '#10b981';      // verde completo
-            else if (pct >= 50) color = '#f59e0b';  // ámbar medio
-            else color = '#ef4444';                 // rojo bajo
+            if (scanned === total) {
+                color = '#10b981'; // verde completo
+                tooltipText = `Completo (${scanned}/${total})`;
+            } else if (scanned > total) {
+                color = '#8b5cf6'; // púrpura para anomalía (> 100%)
+                const extra = scanned - total;
+                tooltipText = `¡Anomalía! Sobran ${extra} ${extra === 1 ? 'hoja' : 'hojas'} (${scanned}/${total})`;
+            } else {
+                // scanned < total
+                const missing = total - scanned;
+                if (pct >= 50) {
+                    color = '#f59e0b'; // ámbar medio
+                } else {
+                    color = '#ef4444'; // rojo bajo
+                }
+                tooltipText = `Faltan ${missing} ${missing === 1 ? 'hoja' : 'hojas'} (${scanned}/${total})`;
+            }
         } else if (scanned > 0) {
-            // Si no hay total conocido pero sí escaneados
             color = '#10b981';
+            tooltipText = `${scanned} escaneados (sin total de clase asignado)`;
+        } else {
+            tooltipText = '0/0 (sin clase asignada o sin estudiantes)';
         }
 
         cell.innerHTML = `
-            <div style="display:flex; flex-direction:column; align-items:center; gap:2px; line-height:1.2;">
-                <span style="font-weight:700; font-size:12px; color:#1e293b;">${scanned}/${total}</span>
-                <span style="font-size:10px; font-weight:700; padding:1px 7px; border-radius:8px; background:${color}; color:#ffffff;">${pct}%</span>
+            <div style="display:inline-flex; align-items:center; justify-content:center; gap:5px; line-height:1.2;">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:2px; cursor:default;" title="${escapeHtml(tooltipText)}">
+                    <span style="font-weight:700; font-size:12px; color:#1e293b;">${scanned}/${total}</span>
+                    <span style="font-size:10px; font-weight:700; padding:1px 7px; border-radius:8px; background:${color}; color:#ffffff; ${pct > 100 ? 'box-shadow:0 0 0 1px rgba(139,92,246,0.5);' : ''}">${pct}%</span>
+                </div>
+                <button type="button" class="zg-quiz-single-status-refresh" title="Refrescar status de este quiz" style="background:none; border:none; padding:2px; margin:0; cursor:pointer; color:#94a3b8; font-size:11px; line-height:1; border-radius:3px; display:inline-flex; align-items:center; justify-content:center;">
+                    <i class="fa fa-refresh"></i>
+                </button>
             </div>
         `;
     }
@@ -1715,6 +1747,49 @@
             toRemove.forEach(k => localStorage.removeItem(k));
         } catch (e) { /* ignore */ }
         zgRawPageCache.clear();
+    }
+
+    // Refresca el estado (papers escaneados) de un único quiz
+    async function refreshSingleQuizStatus(btn) {
+        const row = btn.closest('tr');
+        if (!row) return;
+        const statusTd = row.querySelector('.zg-status-td');
+        if (!statusTd) return;
+        if (btn.dataset.zgRefreshing === '1') return;
+
+        btn.dataset.zgRefreshing = '1';
+        btn.disabled = true;
+        const icon = btn.querySelector('i');
+        if (icon) icon.className = 'fa fa-spinner fa-spin';
+
+        try {
+            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+            if (!link) return;
+            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+            const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
+            if (quizId) {
+                try {
+                    localStorage.removeItem('zg_status_' + quizId);
+                } catch (e) { /* ignore */ }
+            }
+            zgRawPageCache.delete(quizAllBaseUrl);
+
+            const classMap = await getClassStudentCountMap();
+            const classText = getQuizRowClassText(row);
+            const total = getQuizClassStudentCount(classText, classMap);
+
+            const status = await fetchQuizStatus(quizAllBaseUrl, true);
+            const scanned = status ? status.scanned : 0;
+            renderQuizStatusCell(statusTd, scanned, total);
+            statusTd.dataset.zgStatusDone = 'true';
+            showZgToast('Status del quiz actualizado', 'success');
+        } catch (err) {
+            console.error('❌ [ZipGrade] Error al refrescar status de quiz:', err);
+            showZgToast('Error al refrescar el status del quiz', 'error');
+            if (icon) icon.className = 'fa fa-refresh';
+            btn.disabled = false;
+            delete btn.dataset.zgRefreshing;
+        }
     }
 
     // Refresca el estado (papers escaneados) de todos los quizzes de la tabla sin recargar la página.
@@ -1750,10 +1825,20 @@
         window._zgStatusRefreshBtn = true;
         document.addEventListener('click', (e) => {
             const btn = e.target && e.target.closest ? e.target.closest('.zg-status-refresh-btn') : null;
-            if (!btn) return;
-            e.preventDefault();
-            e.stopPropagation();
-            refreshQuizStatuses();
+            if (btn) {
+                e.preventDefault();
+                e.stopPropagation();
+                refreshQuizStatuses();
+                return;
+            }
+
+            const singleBtn = e.target && e.target.closest ? e.target.closest('.zg-quiz-single-status-refresh') : null;
+            if (singleBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                refreshSingleQuizStatus(singleBtn);
+                return;
+            }
         });
     }
 
