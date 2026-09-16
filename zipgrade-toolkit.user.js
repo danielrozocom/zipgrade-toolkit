@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      29.5
+// @version      29.9
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -1103,6 +1103,69 @@
     }
 
     function translateQuizHeaders() {
+        // 1. Título H2
+        document.querySelectorAll('h2').forEach(h => {
+            const txt = h.innerText.trim();
+            if (txt === 'All Quizzes') h.innerText = 'Quizzes';
+            else if (txt === 'Archived Quizzes') h.innerText = 'Quizzes Archivados';
+        });
+
+        // 2. Botones de la barra de acciones superior
+        const btnDelete = document.getElementById('buttonDelete');
+        if (btnDelete && btnDelete.innerText.trim() === 'Delete Selected') btnDelete.innerText = 'Eliminar Seleccionados';
+
+        const btnArchive = document.getElementById('buttonArchive');
+        if (btnArchive && btnArchive.innerText.trim() === 'Archive Selected') btnArchive.innerText = 'Archivar Seleccionados';
+
+        const btnUnarchive = document.getElementById('buttonUnarchive');
+        if (btnUnarchive && btnUnarchive.innerText.trim() === 'Unarchive Selected') btnUnarchive.innerText = 'Desarchivar Seleccionados';
+
+        const showArchived = document.getElementById('showArchived');
+        if (showArchived) {
+            if (showArchived.innerText.includes('Show Archived Quizzes')) showArchived.innerText = 'Ver Quizzes Archivados';
+            else if (showArchived.innerText.includes('Show Active Quizzes')) showArchived.innerText = 'Ver Quizzes Activos';
+        }
+
+        const newQuizBtn = document.getElementById('newQuiz');
+        if (newQuizBtn && newQuizBtn.innerText.trim() === 'New Quiz') newQuizBtn.innerText = 'Nuevo Quiz';
+
+        // Dropdown de Folders
+        const folderDropdownBtn = document.querySelector('.btn-group > button.dropdown-toggle');
+        if (folderDropdownBtn && folderDropdownBtn.innerText.includes('Folders')) {
+            folderDropdownBtn.innerHTML = 'Carpetas <span class="caret"></span>';
+        }
+
+        document.querySelectorAll('.dropdown-menu li a').forEach(a => {
+            const txt = a.innerText.trim();
+            if (txt === 'Add New Folder') a.innerText = 'Agregar Nueva Carpeta';
+            else if (txt === 'Manage Folders') a.innerText = 'Administrar Carpetas';
+            else if (txt === 'Move Selected to Home Folder') a.innerText = 'Mover Seleccionados a la Carpeta Principal';
+            else if (txt.startsWith('Move Selected to ')) a.innerText = txt.replace('Move Selected to ', 'Mover Seleccionados a ');
+        });
+
+        // 3. Cuadro de búsqueda DataTables
+        document.querySelectorAll('#quizTable_filter label, .dataTables_filter label').forEach(lbl => {
+            if (lbl.childNodes && lbl.childNodes[0] && lbl.childNodes[0].nodeType === Node.TEXT_NODE) {
+                if (lbl.childNodes[0].nodeValue.includes('Search:')) {
+                    lbl.childNodes[0].nodeValue = 'Buscar: ';
+                }
+            }
+            const inp = lbl.querySelector('input');
+            if (inp && !inp.getAttribute('placeholder')) {
+                inp.setAttribute('placeholder', 'Buscar quiz...');
+            }
+        });
+
+        // 4. DataTables info ("Showing 1 to 42 of 42 entries")
+        document.querySelectorAll('#quizTable_info, .dataTables_info').forEach(info => {
+            const txt = info.innerText.trim();
+            const m = txt.match(/Showing\s+(\d+)\s+to\s+(\d+)\s+of\s+(\d+)\s+entries/i);
+            if (m) {
+                info.innerText = `Mostrando ${m[1]} a ${m[2]} de ${m[3]} quizzes`;
+            }
+        });
+
+        // 5. Encabezados de tabla
         const table = document.getElementById('quizTable');
         if (!table) return;
         const theadRow = table.querySelector('thead tr');
@@ -1112,7 +1175,7 @@
             'quiz name': 'Nombre',
             'quizzes': 'Evaluaciones',
             'name': 'Nombre',
-            'class': 'Clase',
+            'class': 'Curso',
             'questions': 'Preguntas',
             'date': 'Fecha',
             'folder': 'Carpeta'
@@ -1960,29 +2023,47 @@
         }
 
         const classMap = await getClassStudentCountMap();
-        for (const row of pending) {
-            const statusTd = row.querySelector('.zg-status-td');
-            if (!statusTd) continue;
 
-            const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
-            if (!link) {
-                statusTd.innerHTML = '<span style="color:#cbd5e1;">-</span>';
-                statusTd.dataset.zgStatusDone = 'true';
-                continue;
+        // Carga concurrente con pool de 4 workers para que cargue drásticamente más rápido
+        let pendingIdx = 0;
+        const STATUS_CONCURRENCY = 4;
+        async function statusWorker() {
+            while (pendingIdx < pending.length) {
+                const row = pending[pendingIdx++];
+                const statusTd = row.querySelector('.zg-status-td');
+                if (!statusTd) continue;
+
+                const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+                if (!link) {
+                    statusTd.innerHTML = '<span style="color:#cbd5e1;">-</span>';
+                    statusTd.dataset.zgStatusDone = 'true';
+                    continue;
+                }
+                const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
+
+                // Nombre de la clase leído de la celda "Class" del quizTable
+                const classText = getQuizRowClassText(row);
+
+                // Total de estudiantes para la clase del quiz
+                const total = getQuizClassStudentCount(classText, classMap);
+
+                try {
+                    const status = await fetchQuizStatus(quizAllBaseUrl, !!force);
+                    const scanned = status ? status.scanned : 0;
+                    renderQuizStatusCell(statusTd, scanned, total);
+                } catch (err) {
+                    statusTd.innerHTML = '<span style="color:#ef4444;">-</span>';
+                } finally {
+                    statusTd.dataset.zgStatusDone = 'true';
+                }
             }
-            const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
-
-            // Nombre de la clase leído de la celda "Class" del quizTable
-            const classText = getQuizRowClassText(row);
-
-            // Total de estudiantes para la clase del quiz
-            const total = getQuizClassStudentCount(classText, classMap);
-
-            const status = await fetchQuizStatus(quizAllBaseUrl, !!force);
-            const scanned = status ? status.scanned : 0;
-            renderQuizStatusCell(statusTd, scanned, total);
-            statusTd.dataset.zgStatusDone = 'true';
         }
+
+        const workers = [];
+        for (let i = 0; i < STATUS_CONCURRENCY && i < pending.length; i++) {
+            workers.push(statusWorker());
+        }
+        await Promise.all(workers);
     }
 
     // ==========================================
@@ -4767,8 +4848,19 @@
     // ==========================================
     // 6.6. ESTUDIANTES FALTANTES EN DETALLE DEL QUIZ (/quiz/.../all/)
     // ==========================================
-    async function fetchQuizClassesRoster(classNames) {
+    const ZG_ROSTER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos de caché para listas de estudiantes de clases
+
+    async function fetchQuizClassesRoster(classNames, bypassCache = false) {
         if (!classNames || classNames.length === 0) return [];
+        const normTargetNames = classNames.map(n => normalizeClassName(n));
+        const cacheKey = 'zg_roster_' + normTargetNames.sort().join('_');
+        if (!bypassCache) {
+            const cached = zgCacheGet(cacheKey, ZG_ROSTER_CACHE_TTL_MS);
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+                return cached;
+            }
+        }
+
         try {
             const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
             if (res.status !== 200) return [];
@@ -4776,15 +4868,13 @@
             const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
             const matchedClassUrls = [];
 
-            const normTargetNames = classNames.map(n => normalizeClassName(n));
-
             rows.forEach(row => {
                 const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
                 const linkEl = row.querySelector('td:nth-child(2) a') || row.querySelector('a[href*="/classes/"]');
                 if (nameEl && linkEl) {
                     const cName = nameEl.innerText.trim();
                     const cNorm = normalizeClassName(cName);
-                    
+
                     // 1. Coincidencia exacta de nombre normalizado
                     let isMatch = normTargetNames.includes(cNorm);
 
@@ -4810,49 +4900,55 @@
                 }
             });
 
-            // Descargar los estudiantes de cada clase encontrada
-            const allStudents = [];
-            for (const cls of matchedClassUrls) {
+            // Descargar los estudiantes de cada clase encontrada en paralelo
+            const classResults = await Promise.all(matchedClassUrls.map(async (cls) => {
                 try {
                     const cRes = await customRequest({ method: 'GET', url: cls.url }, 30000);
-                    if (cRes.status === 200) {
-                        const cDoc = new DOMParser().parseFromString(cRes.responseText, 'text/html');
-                        const sRows = Array.from(cDoc.querySelectorAll('table tbody tr'));
-                        sRows.forEach(sRow => {
-                            const cells = Array.from(sRow.querySelectorAll('td'));
-                            if (cells.length >= 2) {
-                                const idCell = cells.find(c => /^\s*\d{3,12}\s*$/.test(c.innerText.trim()));
-                                const nameCell = cells.find(c => c.querySelector('a[href*="/students/"]') || (c.innerText.trim().length > 2 && !/^\d+$/.test(c.innerText.trim()) && !/edit|delete|action/i.test(c.innerText)));
-                                
-                                let studentId = '';
-                                let studentName = '';
+                    if (cRes.status !== 200) return [];
+                    const cDoc = new DOMParser().parseFromString(cRes.responseText, 'text/html');
+                    const sRows = Array.from(cDoc.querySelectorAll('table tbody tr'));
+                    const students = [];
+                    sRows.forEach(sRow => {
+                        const cells = Array.from(sRow.querySelectorAll('td'));
+                        if (cells.length >= 2) {
+                            const idCell = cells.find(c => /^\s*\d{3,12}\s*$/.test(c.innerText.trim()));
+                            const nameCell = cells.find(c => c.querySelector('a[href*="/students/"]') || (c.innerText.trim().length > 2 && !/^\d+$/.test(c.innerText.trim()) && !/edit|delete|action/i.test(c.innerText)));
 
-                                if (idCell) studentId = idCell.innerText.trim();
-                                if (nameCell) studentName = nameCell.innerText.trim();
+                            let studentId = '';
+                            let studentName = '';
 
-                                const sLink = sRow.querySelector('a[href*="/students/"]');
-                                if (sLink && !studentName) {
-                                    studentName = sLink.innerText.trim();
-                                }
+                            if (idCell) studentId = idCell.innerText.trim();
+                            if (nameCell) studentName = nameCell.innerText.trim();
 
-                                if (!studentId && cells[1]) studentId = cells[1].innerText.trim();
-                                if (!studentName && cells[2]) studentName = cells[2].innerText.trim();
+                            const sLink = sRow.querySelector('a[href*="/students/"]');
+                            if (sLink && !studentName) {
+                                studentName = sLink.innerText.trim();
+                            }
 
-                                if (studentId || studentName) {
-                                    if (!/no data|no records/i.test(studentId + studentName)) {
-                                        allStudents.push({
-                                            id: studentId,
-                                            name: studentName,
-                                            className: cls.name
-                                        });
-                                    }
+                            if (!studentId && cells[1]) studentId = cells[1].innerText.trim();
+                            if (!studentName && cells[2]) studentName = cells[2].innerText.trim();
+
+                            if (studentId || studentName) {
+                                if (!/no data|no records/i.test(studentId + studentName)) {
+                                    students.push({
+                                        id: studentId,
+                                        name: studentName,
+                                        className: cls.name
+                                    });
                                 }
                             }
-                        });
-                    }
+                        }
+                    });
+                    return students;
                 } catch (e) {
                     console.warn(`⚠️ Error obteniendo estudiantes de clase ${cls.name}:`, e);
+                    return [];
                 }
+            }));
+
+            const allStudents = classResults.flat();
+            if (allStudents.length > 0) {
+                zgCacheSet(cacheKey, allStudents);
             }
             return allStudents;
         } catch (e) {
@@ -4861,7 +4957,14 @@
         }
     }
 
-    async function fetchAllStudentsDirectory() {
+    async function fetchAllStudentsDirectory(bypassCache = false) {
+        const cacheKey = 'zg_all_students_dir';
+        if (!bypassCache) {
+            const cached = zgCacheGet(cacheKey, ZG_ROSTER_CACHE_TTL_MS);
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+                return cached;
+            }
+        }
         try {
             const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/students/' }, 35000);
             if (res.status !== 200) return [];
@@ -4877,7 +4980,7 @@
                     const firstText = (cells[3] ? cells[3].innerText : '').trim();
                     const lastText = (cells[4] ? cells[4].innerText : '').trim();
                     const classText = (cells[5] ? cells[5].innerText : '').trim();
-                    
+
                     let fullName = '';
                     const link = nameCell ? nameCell.querySelector('a') : null;
                     if (link) {
@@ -4897,6 +5000,9 @@
                     }
                 }
             });
+            if (list.length > 0) {
+                zgCacheSet(cacheKey, list);
+            }
             return list;
         } catch (e) {
             console.warn('⚠️ Error obteniendo directorio de /students/:', e);
@@ -4991,7 +5097,7 @@
         const summaryEl = container.querySelector('#zg-missing-summary');
         const tableContainer = container.querySelector('#zg-missing-table-container');
 
-        async function runMissingAnalysis() {
+        async function runMissingAnalysis(forceRefresh = false) {
             checkBtn.disabled = true;
             badgeEl.innerText = 'Cargando...';
             badgeEl.style.background = '#e0e7ff';
@@ -5025,15 +5131,15 @@
                 // 2. Obtener lista de estudiantes que pertenecen a la(s) clase(s) del quiz
                 let roster = [];
                 if (quizClasses.length > 0) {
-                    roster = await fetchQuizClassesRoster(quizClasses);
+                    roster = await fetchQuizClassesRoster(quizClasses, forceRefresh === true);
                 }
 
                 // Si no se obtuvo vía la página de cada clase, filtrar desde el directorio de /students/
                 if (roster.length === 0) {
-                    const allStudents = await fetchAllStudentsDirectory();
+                    const allStudents = await fetchAllStudentsDirectory(forceRefresh === true);
                     if (quizClasses.length > 0) {
                         const targetNorms = quizClasses.map(normalizeClassName);
-                        
+
                         // Filtrar ÚNICAMENTE los estudiantes cuya clase coincida exactamente con la asignada
                         roster = allStudents.filter(st => {
                             if (!st.className) return false;
@@ -5165,29 +5271,171 @@
             }
         }
 
-        checkBtn.addEventListener('click', runMissingAnalysis);
+        checkBtn.addEventListener('click', () => runMissingAnalysis(true));
 
         // Auto-ejecución inmediata sin necesidad de que el usuario tenga que dar clic en "Verificar"
-        runMissingAnalysis();
+        runMissingAnalysis(false);
     }
 
     // ==========================================
-    // 6.6. TRADUCCIÓN DE DETALLE DE QUIZ Y HOJA INDIVIDUAL
+    // 6.6. TRADUCCIÓN GLOBAL Y DE DETALLES
     // ==========================================
-    function translateNodeTexts(root, dict) {
-        if (!root) return;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        while ((node = walker.nextNode())) {
-            const trimmed = node.nodeValue.trim();
-            if (trimmed && dict[trimmed]) {
-                node.nodeValue = node.nodeValue.replace(trimmed, dict[trimmed]);
+    function translateGlobalNavMenu() {
+        // Menú principal superior (Navbar) en cualquier estructura de ZipGrade (.page-header, .navbar, .nav, .page-header-top)
+        const navLinks = document.querySelectorAll('.page-header .nav a, .navbar .nav a, .navbar-nav a, ul.nav a');
+        navLinks.forEach(a => {
+            const txt = a.innerText.trim();
+            if (txt === 'Quizzes') a.childNodes[0].nodeValue = 'Quizzes';
+            else if (txt === 'Classes') a.childNodes[0].nodeValue = 'Cursos';
+            else if (txt === 'Students') a.childNodes[0].nodeValue = 'Estudiantes';
+            else if (txt === 'Tags') a.childNodes[0].nodeValue = 'Tags';
+            else if (txt === 'Answer Sheets') a.childNodes[0].nodeValue = 'Hojas de Respuestas';
+            else if (txt === 'Sharing') a.childNodes[0].nodeValue = 'Compartir';
+            else if (txt === 'My Account') a.childNodes[0].nodeValue = 'Mi Cuenta';
+            else if (txt === 'More' || txt.startsWith('More')) a.childNodes[0].nodeValue = 'Más ';
+            else if (txt === 'FAQ / Support') a.innerText = 'Preguntas Frecuentes / Soporte';
+            else if (txt === 'Pricing') a.innerText = 'Precios';
+            else if (txt === 'Log Out' || txt.includes('Log Out')) a.innerHTML = '<i class="icon-key"></i> Cerrar Sesión';
+        });
+
+        // Usuario actual
+        const userSpans = document.querySelectorAll('.username, .top-menu .username, span.username');
+        userSpans.forEach(userSpan => {
+            if (userSpan && userSpan.childNodes && userSpan.childNodes.length > 0) {
+                userSpan.childNodes.forEach(cn => {
+                    if (cn.nodeType === Node.TEXT_NODE && cn.nodeValue.includes('Current User:')) {
+                        cn.nodeValue = cn.nodeValue.replace('Current User:', 'Usuario Actual:');
+                    }
+                });
             }
+        });
+
+        // Alertas de suscripción
+        document.querySelectorAll('.alert.alert-warning, .alert').forEach(al => {
+            const strong = al.querySelector('strong');
+            if (strong && strong.innerText.includes('grading subscription')) {
+                strong.innerText = strong.innerText
+                    .replace(/Your unlimited grading subscription will expire in (\d+) days?\./i, 'Tu suscripción de calificación ilimitada vencerá en $1 días.')
+                    .replace(/Your unlimited grading subscription has expired\./i, 'Tu suscripción de calificación ilimitada ha expirado.');
+            }
+            const subBtn = al.querySelector('button, a');
+            if (subBtn && subBtn.innerText.includes('Extend Subscription')) {
+                subBtn.innerText = subBtn.innerText
+                    .replace('Extend Subscription 1 Year', 'Extender Suscripción 1 Año')
+                    .replace('Extend Subscription', 'Extender Suscripción');
+            }
+        });
+
+        // Pre-footer y footer global
+        document.querySelectorAll('.page-prefooter, .page-footer').forEach(footer => {
+            if (footer.dataset.zgTranslated) return;
+            footer.dataset.zgTranslated = 'true';
+            const dict = [
+                ['Install ZipGrade Free', 'Instalar ZipGrade Gratis'],
+                ['Product', 'Producto'],
+                ['Pricing', 'Precios'],
+                ['Printable Answer Sheets', 'Hojas de Respuestas Imprimibles'],
+                ['Support', 'Soporte'],
+                ['Student Portal Login', 'Portal de Estudiantes'],
+                ['Company Info:', 'Información de la Empresa:'],
+                ['About Us', 'Sobre Nosotros'],
+                ['Privacy Policy', 'Política de Privacidad'],
+                ['Terms of Service', 'Términos de Servicio'],
+                ['All Rights Reserved.', 'Todos los derechos reservados.']
+            ];
+            dict.forEach(([en, es]) => {
+                footer.innerHTML = footer.innerHTML.replace(en, es);
+            });
+        });
+
+        // Traducir document.title (título de la pestaña / metadata title)
+        if (document.title) {
+            document.title = document.title
+                .replace(/^ZipGrade:\s*All Quizzes/i, 'ZipGrade: Quizzes')
+                .replace(/^ZipGrade:\s*Archived Quizzes/i, 'ZipGrade: Quizzes Archivados')
+                .replace(/^ZipGrade:\s*All Classes/i, 'ZipGrade: Cursos')
+                .replace(/^ZipGrade:\s*Classes/i, 'ZipGrade: Cursos')
+                .replace(/^ZipGrade:\s*Class:\s*/i, 'ZipGrade: Curso: ')
+                .replace(/^ZipGrade:\s*All Students/i, 'ZipGrade: Estudiantes')
+                .replace(/^ZipGrade:\s*Students/i, 'ZipGrade: Estudiantes')
+                .replace(/^ZipGrade:\s*Student:\s*/i, 'ZipGrade: Estudiante: ')
+                .replace(/^ZipGrade:\s*All Tags/i, 'ZipGrade: Tags')
+                .replace(/^ZipGrade:\s*Answer Sheets/i, 'ZipGrade: Hojas de Respuestas');
         }
+
+        // Títulos de páginas comunes (H2)
+        document.querySelectorAll('h2').forEach(h => {
+            const txt = h.innerText.trim();
+            if (txt === 'All Classes' || txt === 'Classes') h.innerText = 'Cursos';
+            else if (txt === 'All Students' || txt === 'Students') h.innerText = 'Estudiantes';
+            else if (txt === 'All Quizzes') h.innerText = 'Quizzes';
+            else if (txt === 'Archived Quizzes') h.innerText = 'Quizzes Archivados';
+        });
+
+        // Botones de acción estándar
+        document.querySelectorAll('button, a.btn').forEach(btn => {
+            const txt = btn.innerText.trim();
+            if (txt === 'Add New Class') btn.innerText = 'Agregar Nuevo Curso';
+            else if (txt === 'Export Classes to CSV') btn.innerText = 'Exportar Cursos a CSV';
+            else if (txt === 'Add New Student') btn.innerText = 'Agregar Nuevo Estudiante';
+            else if (txt === 'Import Students from CSV') btn.innerText = 'Importar Estudiantes desde CSV';
+            else if (txt === 'Export Students to CSV') btn.innerText = 'Exportar Estudiantes a CSV';
+        });
+
+        // Cajas de búsqueda DataTables
+        document.querySelectorAll('.dataTables_filter label').forEach(lbl => {
+            if (lbl.childNodes && lbl.childNodes[0] && lbl.childNodes[0].nodeType === Node.TEXT_NODE) {
+                if (lbl.childNodes[0].nodeValue.includes('Search:')) {
+                    lbl.childNodes[0].nodeValue = 'Buscar: ';
+                }
+            }
+            const inp = lbl.querySelector('input');
+            if (inp && !inp.getAttribute('placeholder')) {
+                inp.setAttribute('placeholder', 'Buscar...');
+            }
+        });
+    }
+
+    const MONTHS_ES = {
+        'January': 'Enero', 'February': 'Febrero', 'March': 'Marzo', 'April': 'Abril',
+        'May': 'Mayo', 'June': 'Junio', 'July': 'Julio', 'August': 'Agosto',
+        'September': 'Septiembre', 'October': 'Octubre', 'November': 'Noviembre', 'December': 'Diciembre'
+    };
+
+    const MONTH_NUM_TO_ES = {
+        '01': 'ENE', '02': 'FEB', '03': 'MAR', '04': 'ABR',
+        '05': 'MAY', '06': 'JUN', '07': 'JUL', '08': 'AGO',
+        '09': 'SEP', '10': 'OCT', '11': 'NOV', '12': 'DIC',
+        '1': 'ENE', '2': 'FEB', '3': 'MAR', '4': 'ABR',
+        '5': 'MAY', '6': 'JUN', '7': 'JUL', '8': 'AGO',
+        '9': 'SEP'
+    };
+
+    // Convierte "2026/09/15 11:35AM" o "2026-09-15 11:35 AM" a "15/SEP/2026 11:35 A.M."
+    function formatDateTimeSpanish(rawStr) {
+        if (!rawStr) return rawStr;
+        const clean = rawStr.trim();
+        // Match standard ZipGrade timestamp: YYYY/MM/DD hh:mm[:ss][ ](AM|PM) or YYYY-MM-DD...
+        const m = clean.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([AaPp]\.?[Mm]\.?)?/i);
+        if (m) {
+            const year = m[1];
+            const monthCode = MONTH_NUM_TO_ES[m[2]] || m[2];
+            const day = m[3].padStart(2, '0');
+            const time = m[4];
+            let meridiem = '';
+            if (m[5]) {
+                const isPm = /p/i.test(m[5]);
+                meridiem = isPm ? ' P.M.' : ' A.M.';
+            }
+            return `${day}/${monthCode}/${year} ${time}${meridiem}`.trim();
+        }
+        return rawStr;
     }
 
     function translateQuizDetailPage() {
         if (window.location.pathname.includes('/paper/')) return;
+
+        translateGlobalNavMenu();
 
         // Encabezados H2 superiores (Quiz: ... Class: ...)
         document.querySelectorAll('h2').forEach(h => {
@@ -5203,19 +5451,65 @@
             }
         });
 
-        // Títulos de portlets / tarjetas
+        // Títulos de portlets / tarjetas (insensible a mayúsculas/minúsculas)
         const titleDict = {
-            'Quiz Details': 'Detalles del Quiz',
-            'Answer Key': 'Clave de Respuestas',
-            'Score Distribution': 'Distribución de Calificaciones',
-            'Online Submission': 'Entrega Online',
-            'Quiz Statistics': 'Estadísticas del Quiz',
-            'Item Analysis': 'Análisis de Preguntas / Reactivos',
-            'Graded Papers': 'Hojas Calificadas'
+            'QUIZ DETAILS': 'DETALLES DEL QUIZ',
+            'ANSWER KEY': 'CLAVE DE RESPUESTAS',
+            'SCORE DISTRIBUTION': 'DISTRIBUCIÓN DE CALIFICACIONES',
+            'ONLINE SUBMISSION': 'ENTREGA ONLINE',
+            'QUIZ STATISTICS': 'ESTADÍSTICAS DEL QUIZ',
+            'ITEM ANALYSIS': 'ANÁLISIS POR ÍTEM',
+            'GRADED PAPERS': 'HOJAS CALIFICADAS',
+            'TAG ANALYSIS SUMMARY': 'RESUMEN DE ANÁLISIS POR TAGS',
+            'TAG ANALYSIS BY STUDENT': 'ANÁLISIS POR TAGS POR ESTUDIANTE'
         };
-        document.querySelectorAll('.portlet-title .caption-subject').forEach(el => {
-            const txt = el.innerText.trim();
-            if (titleDict[txt]) el.innerText = titleDict[txt];
+        document.querySelectorAll('.portlet-title').forEach(pt => {
+            const span = pt.querySelector('.caption-subject');
+            const targetEl = span || pt.querySelector('.caption');
+            if (targetEl) {
+                const raw = targetEl.innerText.trim().toUpperCase();
+                if (titleDict[raw]) {
+                    if (span) {
+                        span.className = 'caption-subject theme-font bold uppercase';
+                        span.innerText = titleDict[raw];
+                    } else {
+                        targetEl.innerHTML = `<span class="caption-subject theme-font bold uppercase">${titleDict[raw]}</span>`;
+                    }
+                }
+            }
+        });
+
+        // Traducir gráfico AmCharts (SVG)
+        function translateChartSvg() {
+            const chartDiv = document.getElementById('chartdiv');
+            if (!chartDiv) return;
+            chartDiv.querySelectorAll('text, tspan').forEach(el => {
+                const txt = el.textContent.trim();
+                if (txt === 'Score : Percent') el.textContent = 'Puntaje : Porcentaje';
+                else if (txt === 'Papers') el.textContent = 'Hojas';
+                else if (txt === 'Show all') el.textContent = 'Mostrar todo';
+            });
+            const amLink = chartDiv.querySelector('a[href*="amcharts.com"]');
+            if (amLink) amLink.style.display = 'none';
+        }
+        translateChartSvg();
+        setTimeout(translateChartSvg, 250);
+        setTimeout(translateChartSvg, 800);
+
+        // Traducir fecha en la tabla (e.g. September 15, 2026 -> 15 de Septiembre, 2026)
+        document.querySelectorAll('table td').forEach(td => {
+            let txt = td.innerText.trim();
+            for (const [enM, esM] of Object.entries(MONTHS_ES)) {
+                if (txt.includes(enM)) {
+                    const dateMatch = txt.match(new RegExp(`${enM}\\s+(\\d+),?\\s+(\\d{4})`));
+                    if (dateMatch) {
+                        td.innerText = `${dateMatch[1]} de ${esM}, ${dateMatch[2]}`;
+                    } else {
+                        td.innerText = txt.replace(enM, esM);
+                    }
+                    break;
+                }
+            }
         });
 
         // Online Submission text
@@ -5229,6 +5523,11 @@
                 p.innerHTML = t.replace('Open Submission: Enabled', 'Recepción abierta: Activada');
             } else if (t.includes('Number of Verified Assignments:')) {
                 p.innerHTML = t.replace('Number of Verified Assignments:', 'Asignaciones verificadas:');
+            } else if (t.includes('Times are in') && t.includes('timezone')) {
+                p.innerText = p.innerText.replace(/Times are in '(.*?)' timezone\. Current time is (.*?)\./i, (match, tz, time) => {
+                    const formattedTime = time.replace('AM', 'A.M.').replace('PM', 'P.M.');
+                    return `Las horas corresponden a la zona horaria '${tz}'. Hora actual: ${formattedTime}.`;
+                });
             }
         });
 
@@ -5270,19 +5569,23 @@
             'Custom Export Wizard...': 'Asistente de exportación...',
             'Full Format (with student responses) - CSV': 'Formato completo (con respuestas) - CSV',
             'Standard Format - CSV': 'Formato estándar - CSV',
-            'Item Analysis - CSV': 'Análisis de reactivos - CSV',
-            'Tag by Student Summary - CSV': 'Resumen por competencias - CSV',
-            'Tag by Student Detail - CSV': 'Detalle por competencias - CSV',
+            'Item Analysis - CSV': 'Análisis por ítem - CSV',
+            'Tag by Student Summary - CSV': 'Resumen por Tags - CSV',
+            'Tag by Student Detail - CSV': 'Detalle por Tags - CSV',
             'Full Format (with student responses) - XLSX': 'Formato completo (con respuestas) - Excel',
             'Standard Format - XLSX': 'Formato estándar - Excel',
-            'Item Analysis - XLSX': 'Análisis de reactivos - Excel',
-            'Tag by Student Summary - XLSX': 'Resumen por competencias - Excel',
-            'Tag by Student Detail - XLSX': 'Detalle por competencias - Excel'
+            'Item Analysis - XLSX': 'Análisis por ítem - Excel',
+            'Tag by Student Summary - XLSX': 'Resumen por Tags - Excel',
+            'Tag by Student Detail - XLSX': 'Detalle por Tags - Excel',
+            '----Deprecated Versions----': '----Versiones Anteriores----',
+            'Standard Format (previous Format)': 'Formato estándar (versión anterior)',
+            'Full Format (previous Format)': 'Formato completo (versión anterior)',
+            'Item Analysis (previous Format)': 'Análisis por ítem (versión anterior)'
         };
-        document.querySelectorAll('.dropdown-menu a').forEach(a => {
-            const txt = a.innerText.trim();
+        document.querySelectorAll('.dropdown-menu a, .dropdown-menu li').forEach(el => {
+            const txt = el.innerText.trim();
             if (exportMenuDict[txt]) {
-                a.innerText = exportMenuDict[txt];
+                el.innerText = exportMenuDict[txt];
             }
         });
 
@@ -5315,15 +5618,52 @@
             }
         });
 
-        // Encabezados de Item Analysis
-        const itemThs = document.querySelectorAll('#itemAnalysisTable th');
-        if (itemThs.length >= 6) {
-            if (itemThs[1]) itemThs[1].innerHTML = '<small>Clave</small>';
-            if (itemThs[2]) itemThs[2].innerHTML = '<small>#<br> Correctas</small>';
-            if (itemThs[3]) itemThs[3].innerHTML = '<small>%<br> Acierto</small>';
-            if (itemThs[4]) itemThs[4].innerHTML = '<small>Factor<br>Discrim.</small>';
-            if (itemThs[5]) itemThs[5].innerHTML = '<small>Respuestas</small>';
+        // Encabezados de Item Analysis (preservando estilos CSS y clases nativas)
+        document.querySelectorAll('#itemAnalysisTable th').forEach(th => {
+            const txt = th.innerText.replace(/\s+/g, ' ').trim();
+            const smallEl = th.querySelector('small') || th;
+            if (txt.includes('Key') || txt.includes('Pri. Ans') || txt === 'Clave') smallEl.innerText = 'Clave';
+            else if (txt.includes('Correct') && txt.includes('#')) smallEl.innerHTML = '#<br>Correctas';
+            else if (txt.includes('Correct') && txt.includes('%')) smallEl.innerHTML = '%<br>Acierto';
+            else if (txt.includes('Discrim')) smallEl.innerHTML = 'Factor<br>Discrim.';
+            else if (txt.includes('Responses') || txt === 'Respuestas') smallEl.innerText = 'Respuestas';
+        });
+
+        // Tablas de análisis por Tags (Tag Summary & Tag By Student)
+        document.querySelectorAll('#tagSummaryTable th').forEach(th => {
+            const txt = th.innerText.trim();
+            if (txt === 'Tag') th.innerText = 'Tag';
+            else if (txt === 'Graph') th.innerText = 'Gráfico';
+            else if (txt === 'Min') th.innerText = 'Mín.';
+            else if (txt === '25th') th.innerText = 'P25';
+            else if (txt === '50th') th.innerText = 'P50 (Mediana)';
+            else if (txt === '75th') th.innerText = 'P75';
+            else if (txt === 'Max') th.innerText = 'Máx.';
+            else if (txt === 'Outliers') th.innerText = 'Atípicos';
+            else if (txt === 'Average') th.innerText = 'Promedio';
+        });
+
+        document.querySelectorAll('#tagByStudentTable th').forEach(th => {
+            const span = th.querySelector('span');
+            const target = span || th;
+            const txt = target.innerText.trim();
+            if (txt === 'ID') target.innerText = 'ID';
+            else if (txt === 'Name') target.innerText = 'Estudiante';
+            else if (txt === 'Score') target.innerText = 'Puntaje';
+            else if (txt === 'Overall %') target.innerText = '% General';
+        });
+
+        // Traducir "Showing X to Y of Z entries" de DataTables
+        function translateDataTablesInfo() {
+            document.querySelectorAll('.dataTables_info').forEach(info => {
+                const txt = info.innerText.trim();
+                const m = txt.match(/Showing\s+(\d+)\s+to\s+(\d+)\s+of\s+(\d+)\s+entries/i);
+                if (m) {
+                    info.innerText = `Mostrando ${m[1]} a ${m[2]} de ${m[3]} registros`;
+                }
+            });
         }
+        translateDataTablesInfo();
 
         // Encabezados y ajuste de ancho de Graded Papers
         const gradedTable = document.getElementById('gradedPapers');
@@ -5347,6 +5687,36 @@
             else if (txt === 'Time' || txt === 'Fecha / Hora') th.innerHTML = '<small>Fecha / Hora</small>';
         });
 
+        // Formatear fechas/horas en las filas de #gradedPapers (ej: 2026/09/15 11:35AM -> 15/SEP/2026 11:35 A.M.)
+        function formatGradedPapersDates() {
+            document.querySelectorAll('#gradedPapers tbody tr').forEach(row => {
+                const cells = Array.from(row.querySelectorAll('td'));
+                if (cells.length > 0) {
+                    const lastCell = cells[cells.length - 1];
+                    if (lastCell && !lastCell.dataset.zgDateFormatted) {
+                        const raw = lastCell.innerText.trim();
+                        if (/^\d{4}[/-]\d{1,2}[/-]\d{1,2}/.test(raw)) {
+                            lastCell.innerText = formatDateTimeSpanish(raw);
+                            lastCell.dataset.zgDateFormatted = 'true';
+                        }
+                    }
+                }
+            });
+            translateDataTablesInfo();
+        }
+        formatGradedPapersDates();
+
+        // Observar cambios por paginación o búsqueda en DataTables de gradedPapers
+        const gradedTbody = document.querySelector('#gradedPapers tbody');
+        if (gradedTbody && !window._zgGradedTableObserver) {
+            let timer = null;
+            window._zgGradedTableObserver = new MutationObserver(() => {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(formatGradedPapersDates, 100);
+            });
+            window._zgGradedTableObserver.observe(gradedTbody, { childList: true });
+        }
+
         // Modales de Quiz Detail
         const delModal = document.getElementById('myModelDelete');
         if (delModal) {
@@ -5365,7 +5735,7 @@
             const title = copyModal.querySelector('.modal-title');
             if (title) title.innerText = 'Copiar Quiz';
             const p = copyModal.querySelector('.modal-body p');
-            if (p) p.innerText = 'Crear una copia de este quiz generará un nuevo quiz con las mismas claves, etiquetas y clases asociadas.';
+            if (p) p.innerText = 'Crear una copia de este quiz generará un nuevo quiz con las mismas claves, tags y clases asociadas.';
             const lbl = copyModal.querySelector('label[for="newQuizName"]');
             if (lbl) lbl.innerText = 'Nombre del Nuevo Quiz:';
             const cancelBtn = copyModal.querySelector('button[data-dismiss="modal"]');
@@ -5398,7 +5768,7 @@
                     ['Show Class Percent for Each Question', 'Mostrar porcentaje del curso por pregunta'],
                     ['Show Scanned Paper Image', 'Mostrar imagen de la hoja escaneada'],
                     ['Show Student\'s Correct Answers', 'Mostrar respuestas correctas del estudiante'],
-                    ['Include Additional Page for Tag Data', 'Incluir página adicional para competencias/etiquetas'],
+                    ['Include Additional Page for Tag Data', 'Incluir página adicional para datos de Tags'],
                     ['As multiple PDF files in a Zip file. Default is single PDF.', 'Como múltiples PDFs en un archivo ZIP (Por defecto es un solo PDF).']
                 ];
                 replacements.forEach(([orig, dest]) => {
@@ -5407,6 +5777,8 @@
             }
             const submitBtn = pdfModal.querySelector('#exportSubmitButton');
             if (submitBtn) submitBtn.innerText = 'Generar PDF';
+            const loadingText = pdfModal.querySelector('#loadingImage p');
+            if (loadingText) loadingText.innerText = 'Generando PDF. Esto puede tomar unos minutos.';
             const downloadBtn = pdfModal.querySelector('#exportDownloadButton');
             if (downloadBtn) downloadBtn.innerText = 'Descargar PDF';
         }
@@ -5415,6 +5787,8 @@
     function translatePaperDetailPage() {
         if (!window.location.pathname.includes('/paper/')) return;
 
+        translateGlobalNavMenu();
+
         // Botón volver
         const backBtn = document.querySelector('a[href*="/quiz/"][href$="/all/"]');
         if (backBtn && backBtn.innerText.includes('Back to Quiz')) {
@@ -5422,14 +5796,26 @@
         }
 
         // Título "Quiz:"
-        const portletTitles = document.querySelectorAll('.portlet-title .caption-subject, .portlet-title span');
-        portletTitles.forEach(t => {
-            if (t.innerText.startsWith('Quiz:')) {
-                t.innerText = t.innerText; // Mantener Quiz:
-            } else if (t.innerText.trim() === 'Scanned Image') {
-                t.innerText = 'Hoja Escaneada';
-            } else if (t.innerText.trim() === 'Tagged Questions & Quiz') {
-                t.innerText = 'Desglose por Competencias y Áreas';
+        document.querySelectorAll('.portlet-title').forEach(pt => {
+            const span = pt.querySelector('.caption-subject');
+            const targetEl = span || pt.querySelector('.caption');
+            if (targetEl) {
+                const raw = targetEl.innerText.trim();
+                if (raw === 'Scanned Image') {
+                    if (span) {
+                        span.className = 'caption-subject theme-font bold uppercase';
+                        span.innerText = 'Hoja Escaneada';
+                    } else {
+                        targetEl.innerHTML = '<span class="caption-subject theme-font bold uppercase">Hoja Escaneada</span>';
+                    }
+                } else if (raw === 'Tagged Questions & Quiz') {
+                    if (span) {
+                        span.className = 'caption-subject theme-font bold uppercase';
+                        span.innerText = 'Desglose por Tags';
+                    } else {
+                        targetEl.innerHTML = '<span class="caption-subject theme-font bold uppercase">Desglose por Tags</span>';
+                    }
+                }
             }
         });
 
@@ -5442,12 +5828,19 @@
             'Percent Correct:': 'Porcentaje de Acierto:',
             'Key Version:': 'Versión de Clave:',
             'Scanned:': 'Escaneado el:',
-            'Quiz Tags:': 'Etiquetas del Quiz:'
+            'Quiz Tags:': 'Tags del Quiz:'
         };
         document.querySelectorAll('table td').forEach(td => {
             const txt = td.innerText.trim();
             if (paperFieldDict[txt]) {
                 td.innerText = paperFieldDict[txt];
+                if (txt === 'Scanned:' && td.nextElementSibling) {
+                    const valTd = td.nextElementSibling;
+                    const rawDate = valTd.innerText.trim();
+                    if (/^\d{4}[/-]\d{1,2}[/-]\d{1,2}/.test(rawDate)) {
+                        valTd.innerText = formatDateTimeSpanish(rawDate);
+                    }
+                }
             }
         });
 
@@ -5469,13 +5862,13 @@
             else if (txt === 'Student') th.innerText = 'Respuesta Estudiante';
             else if (txt === 'Score') th.innerText = 'Puntaje';
             else if (txt === 'Mark') th.innerText = 'Calificación';
-            else if (txt === 'Tags') th.innerText = 'Competencia / Asignatura';
+            else if (txt === 'Tags') th.innerText = 'Tags';
         });
 
         // Encabezados de Tagged Questions
         document.querySelectorAll('strong').forEach(str => {
             const txt = str.innerText.trim();
-            if (txt === 'Tag Name') str.innerText = 'Competencia / Asignatura';
+            if (txt === 'Tag Name') str.innerText = 'Nombre de Tag';
             else if (txt === 'Percentiles') str.innerText = 'Distribución / Percentil';
             else if (txt === 'Earn.') str.innerText = 'Obtenido';
             else if (txt === 'Poss.') str.innerText = 'Posible';
@@ -5516,7 +5909,7 @@
                     ['Show Class Percent for Each Question', 'Mostrar porcentaje del curso por pregunta'],
                     ['Show Scanned Paper Image', 'Mostrar imagen de la hoja escaneada'],
                     ['Show Student\'s Correct Answers', 'Mostrar respuestas correctas del estudiante'],
-                    ['Include Additional Page for Tag Data', 'Incluir página adicional para competencias/etiquetas']
+                    ['Include Additional Page for Tag Data', 'Incluir página adicional para datos de Tags']
                 ];
                 replacements.forEach(([orig, dest]) => {
                     body.innerHTML = body.innerHTML.replace(orig, dest);
@@ -6425,7 +6818,35 @@
         return blob;
     }
 
-    // Auto-inicialización según URL
+    // Auto-inicialización según URL y eliminación de parpadeo (Flash of English)
+    const runGlobalHeaderTranslation = () => {
+        translateGlobalNavMenu();
+    };
+
+    // Ejecución INMEDIATA síncrona para que cuando el navegador pinte el DOM ya esté en español
+    runGlobalHeaderTranslation();
+
+    if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
+        translatePaperDetailPage();
+    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
+        translateQuizDetailPage();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            runGlobalHeaderTranslation();
+            if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
+                translatePaperDetailPage();
+            } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
+                translateQuizDetailPage();
+            }
+        });
+    }
+
+    // Re-ejecutar suavemente para atrapar cualquier render tardío de frameworks o DataTables
+    setTimeout(runGlobalHeaderTranslation, 150);
+    setTimeout(runGlobalHeaderTranslation, 500);
+
     if (window.location.pathname.includes('/classes/')) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initUI);
@@ -6461,8 +6882,8 @@
         }
     } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
         const initQuizDetail = () => {
-            initMissingStudentsInQuizDetail();
             translateQuizDetailPage();
+            initMissingStudentsInQuizDetail();
         };
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initQuizDetail);
