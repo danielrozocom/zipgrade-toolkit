@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      28.9
+// @version      29.5
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
+// @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
 // @updateURL    https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -102,6 +103,17 @@
             #subjectTable tbody td {
                 text-align: center !important;
                 vertical-align: middle !important;
+            }
+            #gradedPapers,
+            #itemAnalysisTable {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: auto !important;
+            }
+            #gradedPapers_wrapper,
+            #itemAnalysisTable_wrapper {
+                overflow-x: auto !important;
+                width: 100% !important;
             }
             #zg-quiz-master-check,
             #zg-master-check {
@@ -5160,8 +5172,360 @@
     }
 
     // ==========================================
-    // 7. INICIALIZAR EN /CLASSES/ (INTERFAZ COMPLETA DOWLOADER ZIP)
+    // 6.6. TRADUCCIÓN DE DETALLE DE QUIZ Y HOJA INDIVIDUAL
     // ==========================================
+    function translateNodeTexts(root, dict) {
+        if (!root) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode())) {
+            const trimmed = node.nodeValue.trim();
+            if (trimmed && dict[trimmed]) {
+                node.nodeValue = node.nodeValue.replace(trimmed, dict[trimmed]);
+            }
+        }
+    }
+
+    function translateQuizDetailPage() {
+        if (window.location.pathname.includes('/paper/')) return;
+
+        // Encabezados H2 superiores (Quiz: ... Class: ...)
+        document.querySelectorAll('h2').forEach(h => {
+            if (h.childNodes && h.childNodes.length > 0) {
+                h.childNodes.forEach(node => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const val = node.nodeValue;
+                        if (val.includes('Class:')) {
+                            node.nodeValue = val.replace('Class:', 'Curso:');
+                        }
+                    }
+                });
+            }
+        });
+
+        // Títulos de portlets / tarjetas
+        const titleDict = {
+            'Quiz Details': 'Detalles del Quiz',
+            'Answer Key': 'Clave de Respuestas',
+            'Score Distribution': 'Distribución de Calificaciones',
+            'Online Submission': 'Entrega Online',
+            'Quiz Statistics': 'Estadísticas del Quiz',
+            'Item Analysis': 'Análisis de Preguntas / Reactivos',
+            'Graded Papers': 'Hojas Calificadas'
+        };
+        document.querySelectorAll('.portlet-title .caption-subject').forEach(el => {
+            const txt = el.innerText.trim();
+            if (titleDict[txt]) el.innerText = titleDict[txt];
+        });
+
+        // Online Submission text
+        document.querySelectorAll('.portlet-body p').forEach(p => {
+            const t = p.innerHTML;
+            if (t.includes('Question Keys Uploaded:')) {
+                p.innerHTML = t.replace('Question Keys Uploaded:', 'Preguntas subidas:').replace('None', 'Ninguna');
+            } else if (t.includes('Open Submission: Disabled')) {
+                p.innerHTML = t.replace('Open Submission: Disabled', 'Recepción abierta: Desactivada');
+            } else if (t.includes('Open Submission: Enabled')) {
+                p.innerHTML = t.replace('Open Submission: Enabled', 'Recepción abierta: Activada');
+            } else if (t.includes('Number of Verified Assignments:')) {
+                p.innerHTML = t.replace('Number of Verified Assignments:', 'Asignaciones verificadas:');
+            }
+        });
+
+        // Item Analysis summary (e.g. Primary Key - 26 papers)
+        document.querySelectorAll('.portlet-body strong').forEach(st => {
+            if (st.innerText.trim() === 'Primary Key') {
+                st.innerText = 'Clave Principal';
+                const parentP = st.closest('p');
+                if (parentP && parentP.childNodes) {
+                    parentP.childNodes.forEach(cn => {
+                        if (cn.nodeType === Node.TEXT_NODE && cn.nodeValue.includes('papers')) {
+                            cn.nodeValue = cn.nodeValue.replace(/(\d+)\s+papers/g, '$1 hojas').replace('papers', 'hojas');
+                        }
+                    });
+                }
+            }
+        });
+
+        // Botones de acción principales
+        const buttons = Array.from(document.querySelectorAll('a.btn, button.btn'));
+        buttons.forEach(btn => {
+            const txt = btn.innerText.trim();
+            if (txt === 'Delete') btn.innerHTML = '<i class="fa fa-trash"></i> Eliminar';
+            else if (txt === 'Edit') btn.innerHTML = '<i class="fa fa-pencil"></i> Editar';
+            else if (txt === 'Archive') btn.innerHTML = '<i class="fa fa-folder-open"></i> Archivar';
+            else if (txt === 'Share') btn.innerHTML = '<i class="fa fa-share"></i> Compartir';
+            else if (txt === 'Copy') btn.innerHTML = '<i class="fa fa-clipboard"></i> Copiar';
+            else if (txt === 'Edit Answer Keys') btn.innerHTML = '<i class="fa fa-pencil"></i> Editar Claves';
+            else if (txt === 'Grade PDF File') btn.innerText = 'Calificar Archivo PDF';
+            else if (txt === 'Delete Selected') btn.innerText = 'Eliminar Seleccionados';
+            else if (txt.includes('View/Edit Remote Testing Options')) btn.innerText = 'Opciones de Pruebas Remotas';
+        });
+
+        // Menús desplegables de exportación (PDF, CSV, Excel)
+        const exportMenuDict = {
+            'Page For Each Paper': 'Página por cada hoja',
+            'Strip Report': 'Reporte en tiras',
+            'Answer Key': 'Clave de respuestas',
+            'Custom Export Wizard...': 'Asistente de exportación...',
+            'Full Format (with student responses) - CSV': 'Formato completo (con respuestas) - CSV',
+            'Standard Format - CSV': 'Formato estándar - CSV',
+            'Item Analysis - CSV': 'Análisis de reactivos - CSV',
+            'Tag by Student Summary - CSV': 'Resumen por competencias - CSV',
+            'Tag by Student Detail - CSV': 'Detalle por competencias - CSV',
+            'Full Format (with student responses) - XLSX': 'Formato completo (con respuestas) - Excel',
+            'Standard Format - XLSX': 'Formato estándar - Excel',
+            'Item Analysis - XLSX': 'Análisis de reactivos - Excel',
+            'Tag by Student Summary - XLSX': 'Resumen por competencias - Excel',
+            'Tag by Student Detail - XLSX': 'Detalle por competencias - Excel'
+        };
+        document.querySelectorAll('.dropdown-menu a').forEach(a => {
+            const txt = a.innerText.trim();
+            if (exportMenuDict[txt]) {
+                a.innerText = exportMenuDict[txt];
+            }
+        });
+
+        // Tablas de detalles y estadísticas
+        const labelDict = {
+            'Name:': 'Nombre:',
+            'Answer Sheet:': 'Hoja de Respuestas:',
+            'Date:': 'Fecha:',
+            'Class:': 'Curso / Clase:',
+            'Classes:': 'Cursos / Clases:',
+            'Number Active Keys:': 'Claves Activas:',
+            'Answer Key Labels:': 'Etiquetas de Clave:',
+            'Number of Papers:': 'Total de Hojas:',
+            'Number of Questions:': 'Cantidad de Preguntas:',
+            'Possible Points:': 'Puntos Posibles:',
+            'Score': 'Puntaje',
+            'Percent': 'Porcentaje',
+            'Minimum': 'Mínimo',
+            'Maximum': 'Máximo',
+            'Average': 'Promedio',
+            'Median': 'Mediana',
+            'Std. Dev.': 'Desv. Estándar'
+        };
+        document.querySelectorAll('table td, table th').forEach(cell => {
+            const b = cell.querySelector('b, strong');
+            if (b && labelDict[b.innerText.trim()]) {
+                b.innerText = labelDict[b.innerText.trim()];
+            } else if (labelDict[cell.innerText.trim()]) {
+                cell.innerText = labelDict[cell.innerText.trim()];
+            }
+        });
+
+        // Encabezados de Item Analysis
+        const itemThs = document.querySelectorAll('#itemAnalysisTable th');
+        if (itemThs.length >= 6) {
+            if (itemThs[1]) itemThs[1].innerHTML = '<small>Clave</small>';
+            if (itemThs[2]) itemThs[2].innerHTML = '<small>#<br> Correctas</small>';
+            if (itemThs[3]) itemThs[3].innerHTML = '<small>%<br> Acierto</small>';
+            if (itemThs[4]) itemThs[4].innerHTML = '<small>Factor<br>Discrim.</small>';
+            if (itemThs[5]) itemThs[5].innerHTML = '<small>Respuestas</small>';
+        }
+
+        // Encabezados y ajuste de ancho de Graded Papers
+        const gradedTable = document.getElementById('gradedPapers');
+        if (gradedTable) {
+            gradedTable.style.width = '100%';
+            gradedTable.style.maxWidth = '100%';
+            const parentCol = gradedTable.closest('.col-sm-12');
+            if (parentCol) {
+                parentCol.style.overflowX = 'auto';
+            }
+        }
+
+        const paperThs = document.querySelectorAll('#gradedPapers th');
+        paperThs.forEach(th => {
+            const txt = th.innerText.trim();
+            if (txt === 'ID' || txt === 'ID / Código') th.innerHTML = '<small>ID</small>';
+            else if (txt === 'Name' || txt === 'Nombre del Estudiante' || txt === 'Estudiante') th.innerHTML = '<small>Estudiante</small>';
+            else if (txt === 'Pts' || txt === 'Puntos') th.innerHTML = '<small>Puntos</small>';
+            else if (txt === '%') th.innerHTML = '<small>%</small>';
+            else if (txt === 'Key' || txt === 'Clave') th.innerHTML = '<small>Clave</small>';
+            else if (txt === 'Time' || txt === 'Fecha / Hora') th.innerHTML = '<small>Fecha / Hora</small>';
+        });
+
+        // Modales de Quiz Detail
+        const delModal = document.getElementById('myModelDelete');
+        if (delModal) {
+            const title = delModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Eliminar Quiz';
+            const p = delModal.querySelector('.modal-body p');
+            if (p) p.innerText = 'Eliminar un quiz borrará permanentemente el quiz y todas las hojas escaneadas. Esta acción no se puede deshacer.';
+            const cancelBtn = delModal.querySelector('button[data-dismiss="modal"]');
+            if (cancelBtn) cancelBtn.innerText = 'Cancelar';
+            const submitBtn = delModal.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.innerText = 'Eliminar Quiz Definitivo';
+        }
+
+        const copyModal = document.getElementById('myModelCopy');
+        if (copyModal) {
+            const title = copyModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Copiar Quiz';
+            const p = copyModal.querySelector('.modal-body p');
+            if (p) p.innerText = 'Crear una copia de este quiz generará un nuevo quiz con las mismas claves, etiquetas y clases asociadas.';
+            const lbl = copyModal.querySelector('label[for="newQuizName"]');
+            if (lbl) lbl.innerText = 'Nombre del Nuevo Quiz:';
+            const cancelBtn = copyModal.querySelector('button[data-dismiss="modal"]');
+            if (cancelBtn) cancelBtn.innerText = 'Cancelar';
+            const submitBtn = copyModal.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.innerText = 'Crear Copia';
+        }
+
+        const archModal = document.getElementById('myModelArchive');
+        if (archModal) {
+            const title = archModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Archivar Quiz';
+            const p = archModal.querySelector('.modal-body p');
+            if (p) p.innerText = 'Archivar este quiz lo removerá de los dispositivos móviles y reportes principales. Podrás recuperarlo desde la pestaña Quizzes.';
+            const cancelBtn = archModal.querySelector('button[data-dismiss="modal"]');
+            if (cancelBtn) cancelBtn.innerText = 'No Archivar';
+            const submitBtn = archModal.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.innerText = 'Archivar Quiz';
+        }
+
+        const pdfModal = document.getElementById('pdfOptionsModal');
+        if (pdfModal) {
+            const title = pdfModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Opciones de Exportación PDF';
+            const body = pdfModal.querySelector('.modal-body');
+            if (body && !body.dataset.zgTranslated) {
+                body.dataset.zgTranslated = 'true';
+                const replacements = [
+                    ['Include Primary Answers', 'Incluir respuestas principales'],
+                    ['Show Class Percent for Each Question', 'Mostrar porcentaje del curso por pregunta'],
+                    ['Show Scanned Paper Image', 'Mostrar imagen de la hoja escaneada'],
+                    ['Show Student\'s Correct Answers', 'Mostrar respuestas correctas del estudiante'],
+                    ['Include Additional Page for Tag Data', 'Incluir página adicional para competencias/etiquetas'],
+                    ['As multiple PDF files in a Zip file. Default is single PDF.', 'Como múltiples PDFs en un archivo ZIP (Por defecto es un solo PDF).']
+                ];
+                replacements.forEach(([orig, dest]) => {
+                    body.innerHTML = body.innerHTML.replace(orig, dest);
+                });
+            }
+            const submitBtn = pdfModal.querySelector('#exportSubmitButton');
+            if (submitBtn) submitBtn.innerText = 'Generar PDF';
+            const downloadBtn = pdfModal.querySelector('#exportDownloadButton');
+            if (downloadBtn) downloadBtn.innerText = 'Descargar PDF';
+        }
+    }
+
+    function translatePaperDetailPage() {
+        if (!window.location.pathname.includes('/paper/')) return;
+
+        // Botón volver
+        const backBtn = document.querySelector('a[href*="/quiz/"][href$="/all/"]');
+        if (backBtn && backBtn.innerText.includes('Back to Quiz')) {
+            backBtn.innerHTML = '<span class="glyphicon glyphicon-chevron-left" aria-hidden="true"></span> Volver al Quiz';
+        }
+
+        // Título "Quiz:"
+        const portletTitles = document.querySelectorAll('.portlet-title .caption-subject, .portlet-title span');
+        portletTitles.forEach(t => {
+            if (t.innerText.startsWith('Quiz:')) {
+                t.innerText = t.innerText; // Mantener Quiz:
+            } else if (t.innerText.trim() === 'Scanned Image') {
+                t.innerText = 'Hoja Escaneada';
+            } else if (t.innerText.trim() === 'Tagged Questions & Quiz') {
+                t.innerText = 'Desglose por Competencias y Áreas';
+            }
+        });
+
+        // Tabla de datos del estudiante
+        const paperFieldDict = {
+            'ZipGrade ID:': 'ID ZipGrade:',
+            'External Ref:': 'Ref. Externa:',
+            'Earned Points:': 'Puntos Obtenidos:',
+            'Possible Points:': 'Puntos Posibles:',
+            'Percent Correct:': 'Porcentaje de Acierto:',
+            'Key Version:': 'Versión de Clave:',
+            'Scanned:': 'Escaneado el:',
+            'Quiz Tags:': 'Etiquetas del Quiz:'
+        };
+        document.querySelectorAll('table td').forEach(td => {
+            const txt = td.innerText.trim();
+            if (paperFieldDict[txt]) {
+                td.innerText = paperFieldDict[txt];
+            }
+        });
+
+        // Botones de acción
+        const actionBtns = Array.from(document.querySelectorAll('.btn-group button, .btn-group a'));
+        actionBtns.forEach(b => {
+            const txt = b.innerText.trim();
+            if (txt === 'Delete Paper') b.innerText = 'Eliminar Hoja';
+            else if (txt === 'Change Student') b.innerText = 'Cambiar Estudiante';
+            else if (txt === 'Edit Responses') b.innerText = 'Editar Respuestas';
+            else if (txt === 'Export as PDF') b.innerText = 'Exportar como PDF';
+        });
+
+        // Tabla de respuestas de la hoja
+        const thList = document.querySelectorAll('table thead th');
+        thList.forEach(th => {
+            const txt = th.innerText.replace(/\s+/g, ' ').trim();
+            if (txt === 'Primary Answer') th.innerHTML = 'Clave<br>Principal';
+            else if (txt === 'Student') th.innerText = 'Respuesta Estudiante';
+            else if (txt === 'Score') th.innerText = 'Puntaje';
+            else if (txt === 'Mark') th.innerText = 'Calificación';
+            else if (txt === 'Tags') th.innerText = 'Competencia / Asignatura';
+        });
+
+        // Encabezados de Tagged Questions
+        document.querySelectorAll('strong').forEach(str => {
+            const txt = str.innerText.trim();
+            if (txt === 'Tag Name') str.innerText = 'Competencia / Asignatura';
+            else if (txt === 'Percentiles') str.innerText = 'Distribución / Percentil';
+            else if (txt === 'Earn.') str.innerText = 'Obtenido';
+            else if (txt === 'Poss.') str.innerText = 'Posible';
+        });
+
+        // Modal de borrar hoja
+        const delPaperModal = document.getElementById('deletePaperModal');
+        if (delPaperModal) {
+            const title = delPaperModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Eliminar Hoja Definitivamente';
+            const p = delPaperModal.querySelector('.modal-body p');
+            if (p) p.innerText = 'Eliminar esta hoja la borrará permanentemente de tu cuenta de ZipGrade y se sincronizará con la aplicación móvil.';
+            const submitBtn = delPaperModal.querySelector('#deletePaper');
+            if (submitBtn) submitBtn.innerText = 'Eliminar Hoja';
+        }
+
+        // Modal de cambiar clave
+        const changeKeyModal = document.getElementById('changeKey');
+        if (changeKeyModal) {
+            const title = changeKeyModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Cambiar Clave Asignada';
+            const p = changeKeyModal.querySelector('.modal-body p');
+            if (p) p.innerText = 'Cambia la versión de la clave utilizada para calificar esta hoja.';
+            const submitBtn = changeKeyModal.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.innerText = 'Guardar';
+        }
+
+        // Modal de exportar PDF individual
+        const pdfModal = document.getElementById('pdfOptionsModal');
+        if (pdfModal) {
+            const title = pdfModal.querySelector('.modal-title');
+            if (title) title.innerText = 'Opciones de Exportación a PDF';
+            const body = pdfModal.querySelector('.modal-body');
+            if (body && !body.dataset.zgTranslated) {
+                body.dataset.zgTranslated = 'true';
+                const replacements = [
+                    ['Include Primary Answers', 'Incluir respuestas principales'],
+                    ['Show Class Percent for Each Question', 'Mostrar porcentaje del curso por pregunta'],
+                    ['Show Scanned Paper Image', 'Mostrar imagen de la hoja escaneada'],
+                    ['Show Student\'s Correct Answers', 'Mostrar respuestas correctas del estudiante'],
+                    ['Include Additional Page for Tag Data', 'Incluir página adicional para competencias/etiquetas']
+                ];
+                replacements.forEach(([orig, dest]) => {
+                    body.innerHTML = body.innerHTML.replace(orig, dest);
+                });
+            }
+            const submitBtn = pdfModal.querySelector('#exportSubmitButton');
+            if (submitBtn) submitBtn.innerText = 'Exportar como PDF';
+        }
+    }
     async function initUI() {
         console.log("⚙️ [ZipGrade] Inicializando interfaz y ordenando cursos...");
         ensureAllEntriesShown();
@@ -6086,11 +6450,24 @@
         } else {
             initQuizEditPage();
         }
-    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
+    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
+        const initPaper = () => {
+            translatePaperDetailPage();
+        };
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initMissingStudentsInQuizDetail);
+            document.addEventListener('DOMContentLoaded', initPaper);
         } else {
+            initPaper();
+        }
+    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
+        const initQuizDetail = () => {
             initMissingStudentsInQuizDetail();
+            translateQuizDetailPage();
+        };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initQuizDetail);
+        } else {
+            initQuizDetail();
         }
     }
 })();
