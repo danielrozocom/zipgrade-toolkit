@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      28.7
+// @version      28.8
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -421,7 +421,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.7';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.8';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1701,11 +1701,13 @@
         if (total > 0) {
             if (scanned === total) {
                 color = '#10b981'; // verde completo
-                tooltipText = `Completo (${scanned}/${total})`;
+                tooltipText = `¡Completado! (0 faltan • ${scanned}/${total})`;
             } else if (scanned > total) {
                 color = '#8b5cf6'; // púrpura para anomalía (> 100%)
                 const extra = scanned - total;
-                tooltipText = `¡Anomalía! Sobran ${extra} ${extra === 1 ? 'hoja' : 'hojas'} (${scanned}/${total})`;
+                const sobranVerbo = extra === 1 ? 'Sobra' : 'Sobran';
+                const estudianteWord = extra === 1 ? 'estudiante / hoja' : 'estudiantes / hojas';
+                tooltipText = `¡Anomalía! ${sobranVerbo} ${extra} ${estudianteWord} (${scanned}/${total})`;
             } else {
                 // scanned < total
                 const missing = total - scanned;
@@ -1714,7 +1716,9 @@
                 } else {
                     color = '#ef4444'; // rojo bajo
                 }
-                tooltipText = `Faltan ${missing} ${missing === 1 ? 'hoja' : 'hojas'} (${scanned}/${total})`;
+                const faltaVerbo = missing === 1 ? 'Falta' : 'Faltan';
+                const estudianteWord = missing === 1 ? 'estudiante' : 'estudiantes';
+                tooltipText = `${faltaVerbo} ${missing} ${estudianteWord} (${scanned}/${total} escaneados)`;
             }
         } else if (scanned > 0) {
             color = '#10b981';
@@ -4739,13 +4743,419 @@
                 targetClasses = null;
             }
             sessionStorage.removeItem('zg_copy_pending');
-            sessionStorage.removeItem('zg_copy_source_date');
-            sessionStorage.removeItem('zg_copy_source_classes');
-
             if (targetDate || (targetClasses && targetClasses.length)) {
                 updateQuizDateViaEdit(targetDate || '', targetClasses);
             }
         }
+
+        // 3. Inicializar panel/botón de estudiantes faltantes en el detalle del quiz
+        initMissingStudentsInQuizDetail();
+    }
+
+    // ==========================================
+    // 6.6. ESTUDIANTES FALTANTES EN DETALLE DEL QUIZ (/quiz/.../all/)
+    // ==========================================
+    async function fetchQuizClassesRoster(classNames) {
+        if (!classNames || classNames.length === 0) return [];
+        try {
+            const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
+            if (res.status !== 200) return [];
+            const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+            const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
+            const matchedClassUrls = [];
+
+            const normTargetNames = classNames.map(n => normalizeClassName(n));
+
+            rows.forEach(row => {
+                const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
+                const linkEl = row.querySelector('td:nth-child(2) a') || row.querySelector('a[href*="/classes/"]');
+                if (nameEl && linkEl) {
+                    const cName = nameEl.innerText.trim();
+                    const cNorm = normalizeClassName(cName);
+                    
+                    // 1. Coincidencia exacta de nombre normalizado
+                    let isMatch = normTargetNames.includes(cNorm);
+
+                    // 2. Coincidencia si el target es un rango explícito (ej: "10° - 11°")
+                    if (!isMatch) {
+                        for (const tName of classNames) {
+                            const grades = parseQuizClassGrades(tName);
+                            if (grades.length > 1) {
+                                const w = extractGradeWeight(cName);
+                                if (w < 99999 && grades.includes(Math.floor(w / 100))) {
+                                    isMatch = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (isMatch) {
+                        const href = linkEl.getAttribute('href');
+                        const fullUrl = new URL(href, window.location.origin).href;
+                        matchedClassUrls.push({ name: cName, url: fullUrl });
+                    }
+                }
+            });
+
+            // Descargar los estudiantes de cada clase encontrada
+            const allStudents = [];
+            for (const cls of matchedClassUrls) {
+                try {
+                    const cRes = await customRequest({ method: 'GET', url: cls.url }, 30000);
+                    if (cRes.status === 200) {
+                        const cDoc = new DOMParser().parseFromString(cRes.responseText, 'text/html');
+                        const sRows = Array.from(cDoc.querySelectorAll('table tbody tr'));
+                        sRows.forEach(sRow => {
+                            const cells = Array.from(sRow.querySelectorAll('td'));
+                            if (cells.length >= 2) {
+                                const idCell = cells.find(c => /^\s*\d{3,12}\s*$/.test(c.innerText.trim()));
+                                const nameCell = cells.find(c => c.querySelector('a[href*="/students/"]') || (c.innerText.trim().length > 2 && !/^\d+$/.test(c.innerText.trim()) && !/edit|delete|action/i.test(c.innerText)));
+                                
+                                let studentId = '';
+                                let studentName = '';
+
+                                if (idCell) studentId = idCell.innerText.trim();
+                                if (nameCell) studentName = nameCell.innerText.trim();
+
+                                const sLink = sRow.querySelector('a[href*="/students/"]');
+                                if (sLink && !studentName) {
+                                    studentName = sLink.innerText.trim();
+                                }
+
+                                if (!studentId && cells[1]) studentId = cells[1].innerText.trim();
+                                if (!studentName && cells[2]) studentName = cells[2].innerText.trim();
+
+                                if (studentId || studentName) {
+                                    if (!/no data|no records/i.test(studentId + studentName)) {
+                                        allStudents.push({
+                                            id: studentId,
+                                            name: studentName,
+                                            className: cls.name
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ Error obteniendo estudiantes de clase ${cls.name}:`, e);
+                }
+            }
+            return allStudents;
+        } catch (e) {
+            console.error('❌ Error cargando roster de clases:', e);
+            return [];
+        }
+    }
+
+    async function fetchAllStudentsDirectory() {
+        try {
+            const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/students/' }, 35000);
+            if (res.status !== 200) return [];
+            const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+            const rows = Array.from(doc.querySelectorAll('#studentTable tbody tr'));
+            const list = [];
+            rows.forEach(r => {
+                const cells = Array.from(r.querySelectorAll('td'));
+                if (cells.length >= 3) {
+                    // studentTable: [0: Checkbox, 1: Student ID, 2: Name/External, 3: First Name, 4: Last Name, 5: Classes]
+                    const idText = (cells[1] ? cells[1].innerText : '').trim();
+                    const nameCell = cells[2];
+                    const firstText = (cells[3] ? cells[3].innerText : '').trim();
+                    const lastText = (cells[4] ? cells[4].innerText : '').trim();
+                    const classText = (cells[5] ? cells[5].innerText : '').trim();
+                    
+                    let fullName = '';
+                    const link = nameCell ? nameCell.querySelector('a') : null;
+                    if (link) {
+                        fullName = link.innerText.trim();
+                    } else if (firstText || lastText) {
+                        fullName = `${firstText} ${lastText}`.trim();
+                    } else if (nameCell) {
+                        fullName = nameCell.innerText.trim();
+                    }
+
+                    if (idText || fullName) {
+                        list.push({
+                            id: idText,
+                            name: fullName,
+                            className: classText
+                        });
+                    }
+                }
+            });
+            return list;
+        } catch (e) {
+            console.warn('⚠️ Error obteniendo directorio de /students/:', e);
+            return [];
+        }
+    }
+
+    function initMissingStudentsInQuizDetail() {
+        if (document.getElementById('zg-missing-students-card')) return;
+
+        // 1. Detectar clases asignadas en el detalle del quiz
+        let quizClasses = [];
+        const tds = Array.from(document.querySelectorAll('td'));
+        for (let i = 0; i < tds.length; i++) {
+            const txt = tds[i].innerText.trim();
+            if (/^class(?:es)?:?$/i.test(txt)) {
+                const valTd = tds[i].nextElementSibling;
+                if (valTd) {
+                    quizClasses = Array.from(valTd.querySelectorAll('a'))
+                        .map(a => a.innerText.trim())
+                        .filter(Boolean);
+                    if (quizClasses.length === 0) {
+                        const rawText = valTd.innerText.trim();
+                        if (rawText && rawText !== '-') {
+                            quizClasses = rawText.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        // Si no se encontró en la tabla de detalles, intentar extraer del nombre del quiz "E.S.A. | 601 | P3 | S1"
+        if (quizClasses.length === 0) {
+            const titleEl = document.querySelector('h1, h2, h3, h4');
+            const pageText = document.title + ' ' + (titleEl ? titleEl.innerText : '');
+            const classToken = extractGradeFromQuizName(pageText) || '';
+            if (classToken) quizClasses.push(classToken);
+        }
+
+        const gradedTable = document.getElementById('gradedPapers');
+        const anchor = gradedTable ? (gradedTable.closest('.dataTables_wrapper') || gradedTable) : document.querySelector('.table-responsive') || document.querySelector('table');
+        if (!anchor) return;
+
+        const container = document.createElement('div');
+        container.id = 'zg-missing-students-card';
+        container.style.cssText = `
+            margin: 16px 0 24px 0;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
+        `;
+
+        const displayClassName = quizClasses.length > 0 ? quizClasses.join(', ') : 'Curso';
+
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
+                        <i class="fa fa-users" style="color:#2563eb;"></i> Estudiantes Faltantes <span style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(displayClassName)})</span>
+                    </span>
+                    <span id="zg-missing-badge" style="font-size:11px; font-weight:700; padding:2px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
+                        <i class="fa fa-spinner fa-spin"></i> Analizando...
+                    </span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button id="zg-btn-check-missing" type="button" class="btn btn-primary btn-sm" style="font-size:12px; font-weight:600; border-radius:6px; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2);">
+                        <i class="fa fa-refresh"></i> Actualizar
+                    </button>
+                </div>
+            </div>
+            <div id="zg-missing-results" style="display:block; margin-top:14px; border-top:1px solid #f1f5f9; padding-top:14px;">
+                <div id="zg-missing-summary" style="font-size:13px; color:#64748b; margin-bottom:10px; font-weight:500;">
+                    <i class="fa fa-spinner fa-spin"></i> Obteniendo lista de estudiantes del curso <strong>${escapeHtml(displayClassName)}</strong>...
+                </div>
+                <div id="zg-missing-table-container" style="max-height:360px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; width:100%;"></div>
+            </div>
+        `;
+
+        // Inicialmente oculto hasta confirmar si realmente faltan estudiantes
+        container.style.display = 'none';
+        anchor.parentNode.insertBefore(container, anchor);
+
+        const checkBtn = container.querySelector('#zg-btn-check-missing');
+        const resultsDiv = container.querySelector('#zg-missing-results');
+        const badgeEl = container.querySelector('#zg-missing-badge');
+        const summaryEl = container.querySelector('#zg-missing-summary');
+        const tableContainer = container.querySelector('#zg-missing-table-container');
+
+        async function runMissingAnalysis() {
+            checkBtn.disabled = true;
+            badgeEl.innerText = 'Cargando...';
+            badgeEl.style.background = '#e0e7ff';
+            badgeEl.style.color = '#3730a3';
+
+            try {
+                // 1. Obtener lista de estudiantes que YA presentaron en este quiz (de #gradedPapers)
+                const scannedStudentIds = new Set();
+                const scannedStudentNames = new Set();
+
+                const paperRows = Array.from(document.querySelectorAll('#gradedPapers tbody tr'));
+                paperRows.forEach(r => {
+                    const cells = Array.from(r.querySelectorAll('td'));
+                    if (cells.length >= 2) {
+                        const sLink = r.querySelector('a[href*="/students/"]');
+                        if (sLink) {
+                            scannedStudentNames.add(normalizeClassName(sLink.innerText.trim()));
+                        }
+                        cells.forEach(c => {
+                            const txt = c.innerText.trim();
+                            if (/^\d{3,12}$/.test(txt)) {
+                                scannedStudentIds.add(txt);
+                            }
+                        });
+                        if (cells[1]) scannedStudentNames.add(normalizeClassName(cells[1].innerText.trim()));
+                    }
+                });
+
+                console.log(`🔍 [ZipGrade] Escaneados en el quiz: ${scannedStudentIds.size} IDs, ${scannedStudentNames.size} nombres.`);
+
+                // 2. Obtener lista de estudiantes que pertenecen a la(s) clase(s) del quiz
+                let roster = [];
+                if (quizClasses.length > 0) {
+                    roster = await fetchQuizClassesRoster(quizClasses);
+                }
+
+                // Si no se obtuvo vía la página de cada clase, filtrar desde el directorio de /students/
+                if (roster.length === 0) {
+                    const allStudents = await fetchAllStudentsDirectory();
+                    if (quizClasses.length > 0) {
+                        const targetNorms = quizClasses.map(normalizeClassName);
+                        
+                        // Filtrar ÚNICAMENTE los estudiantes cuya clase coincida exactamente con la asignada
+                        roster = allStudents.filter(st => {
+                            if (!st.className) return false;
+                            const studentClasses = st.className.split(/[,;\n]+/).map(normalizeClassName);
+                            return studentClasses.some(sc => targetNorms.includes(sc));
+                        });
+
+                        // Si el quiz tiene un rango de clases (ej: "10° - 11°")
+                        if (roster.length === 0) {
+                            for (const qClass of quizClasses) {
+                                const grades = parseQuizClassGrades(qClass);
+                                if (grades.length > 1) {
+                                    const matching = allStudents.filter(st => {
+                                        const w = extractGradeWeight(st.className);
+                                        return w < 99999 && grades.includes(Math.floor(w / 100));
+                                    });
+                                    roster.push(...matching);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Quitar duplicados en roster
+                const uniqueRosterMap = new Map();
+                roster.forEach(st => {
+                    const key = (st.id ? 'ID_' + st.id : 'NAME_' + normalizeClassName(st.name));
+                    if (!uniqueRosterMap.has(key)) {
+                        uniqueRosterMap.set(key, st);
+                    }
+                });
+                const uniqueRoster = Array.from(uniqueRosterMap.values());
+
+                // 3. Determinar quiénes faltan de ese curso
+                const missingStudents = uniqueRoster.filter(st => {
+                    const idMatch = st.id && scannedStudentIds.has(st.id);
+                    const nameMatch = st.name && scannedStudentNames.has(normalizeClassName(st.name));
+                    return !idMatch && !nameMatch;
+                });
+
+                // Ordenar faltantes por código numérico de menor a mayor
+                missingStudents.sort((a, b) => {
+                    const idA = parseInt(String(a.id).replace(/[^0-9]/g, ''), 10);
+                    const idB = parseInt(String(b.id).replace(/[^0-9]/g, ''), 10);
+                    if (!isNaN(idA) && !isNaN(idB)) return idA - idB;
+                    return (a.name || '').localeCompare(b.name || '');
+                });
+
+                const totalCourse = uniqueRoster.length;
+                const scannedCount = totalCourse - missingStudents.length;
+
+                // 4. Renderizar resultados: solo mostrar el widget si REALMENTE faltan estudiantes
+                if (missingStudents.length === 0) {
+                    container.style.display = 'none';
+                    tableContainer.innerHTML = '';
+                    console.log('✅ [ZipGrade] No falta ningún estudiante; panel de faltantes oculto.');
+                } else {
+                    const nMissing = missingStudents.length;
+                    const faltanTxt = nMissing === 1 ? 'Falta 1 de' : `Faltan ${nMissing} de`;
+                    const estudianteWord = nMissing === 1 ? 'estudiante' : 'estudiantes';
+                    const faltaVerbo = nMissing === 1 ? 'falta' : 'faltan';
+
+                    container.style.display = 'block';
+                    resultsDiv.style.display = 'block';
+
+                    badgeEl.innerText = `${faltanTxt} ${totalCourse}`;
+                    badgeEl.style.background = '#fef3c7';
+                    badgeEl.style.color = '#92400e';
+
+                    summaryEl.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                            <span>
+                                En el curso <strong style="color:#1e293b;">${escapeHtml(displayClassName)}</strong> ${faltaVerbo} <strong style="color:#b45309; font-size:14px;">${nMissing}</strong> ${estudianteWord} de un total de <strong>${totalCourse}</strong> (${scannedCount} escaneados).
+                            </span>
+                            <button id="zg-copy-missing-names" type="button" class="btn btn-default btn-xs" style="border-radius:4px; font-weight:600;">
+                                <i class="fa fa-clipboard"></i> Copiar lista de faltantes
+                            </button>
+                        </div>
+                    `;
+
+                    let tableHtml = `
+                        <table class="table table-striped table-hover" style="margin:0; width:100%; table-layout:fixed; font-size:12px;">
+                            <thead style="background:#f8fafc; position:sticky; top:0; z-index:1;">
+                                <tr>
+                                    <th style="width:45px; text-align:center;">#</th>
+                                    <th style="width:130px;">ID Estudiante</th>
+                                    <th>Nombre del Estudiante</th>
+                                    <th style="width:110px; text-align:center;">Curso</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+
+                    missingStudents.forEach((st, idx) => {
+                        tableHtml += `
+                            <tr>
+                                <td style="text-align:center; color:#64748b; font-weight:600;">${idx + 1}</td>
+                                <td style="font-weight:700; color:#1e293b;">${escapeHtml(st.id || '-')}</td>
+                                <td style="color:#0f172a; font-weight:600;">${escapeHtml(st.name || '-')}</td>
+                                <td style="color:#475569; text-align:center; font-weight:600;">${escapeHtml(st.className || displayClassName)}</td>
+                            </tr>
+                        `;
+                    });
+
+                    tableHtml += `</tbody></table>`;
+                    tableContainer.innerHTML = tableHtml;
+
+                    const copyListBtn = container.querySelector('#zg-copy-missing-names');
+                    if (copyListBtn) {
+                        copyListBtn.addEventListener('click', () => {
+                            const textToCopy = missingStudents.map((st, i) => `${i + 1}. [${st.id || '-'}] ${st.name} (${st.className || displayClassName})`).join('\n');
+                            navigator.clipboard.writeText(textToCopy).then(() => {
+                                showZgToast(`Se copiaron ${missingStudents.length} estudiantes faltantes al portapapeles.`, 'success');
+                            }).catch(() => {
+                                alert(textToCopy);
+                            });
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('❌ Error analizando estudiantes faltantes:', err);
+                container.style.display = 'block';
+                badgeEl.innerText = 'Error';
+                badgeEl.style.background = '#fee2e2';
+                badgeEl.style.color = '#991b1b';
+                summaryEl.innerHTML = `<span style="color:#ef4444;"><i class="fa fa-times-circle"></i> Ocurrió un error al procesar la lista: ${escapeHtml(err.message)}</span>`;
+            } finally {
+                checkBtn.disabled = false;
+            }
+        }
+
+        checkBtn.addEventListener('click', runMissingAnalysis);
+
+        // Auto-ejecución inmediata sin necesidad de que el usuario tenga que dar clic en "Verificar"
+        runMissingAnalysis();
     }
 
     // ==========================================
