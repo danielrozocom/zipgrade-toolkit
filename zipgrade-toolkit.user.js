@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      28.8
+// @version      28.9
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @match        https://www.zipgrade.com/*
 // @downloadURL  https://raw.githubusercontent.com/danielrozocom/zipgrade-toolkit/main/zipgrade-toolkit.user.js
@@ -4893,6 +4893,7 @@
     }
 
     function initMissingStudentsInQuizDetail() {
+        if (window.location.pathname.includes('/paper/')) return;
         if (document.getElementById('zg-missing-students-card')) return;
 
         // 1. Detectar clases asignadas en el detalle del quiz
@@ -6085,11 +6086,11 @@
         } else {
             initQuizEditPage();
         }
-    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
+    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizDetailPage);
+            document.addEventListener('DOMContentLoaded', initMissingStudentsInQuizDetail);
         } else {
-            initQuizDetailPage();
+            initMissingStudentsInQuizDetail();
         }
     }
 })();
