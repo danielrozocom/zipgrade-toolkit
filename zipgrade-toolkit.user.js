@@ -1543,7 +1543,7 @@
     async function getClassStudentCountMap() {
         if (zgClassStudentCountCache) return zgClassStudentCountCache;
         const cached = zgCacheGet('zg_class_map', ZG_CLASSMAP_CACHE_TTL_MS);
-        if (cached) {
+        if (cached && Object.keys(cached).length > 0) {
             zgClassStudentCountCache = cached;
             return cached;
         }
@@ -1554,21 +1554,41 @@
             if (res.status === 200) {
                 ok = true;
                 const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-                const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
+                const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr, table tbody tr'));
                 rows.forEach(row => {
-                    const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
-                    const countEl = row.querySelector('td:nth-child(4) h4') || row.querySelector('td:nth-child(4)');
-                    if (nameEl && countEl) {
-                        const name = nameEl.innerText.trim();
-                        const count = parseInt(countEl.innerText.trim(), 10);
-                        if (name && !isNaN(count)) map[name] = count;
+                    const cells = Array.from(row.querySelectorAll('td'));
+                    if (cells.length >= 2) {
+                        const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
+                        let name = nameEl ? nameEl.innerText.trim() : '';
+
+                        // Buscar el conteo de estudiantes en las celdas
+                        let count = NaN;
+                        const countEl = row.querySelector('td:nth-child(4) h4') || row.querySelector('td:nth-child(4)');
+                        if (countEl) {
+                            const cVal = parseInt(countEl.innerText.trim(), 10);
+                            if (!isNaN(cVal)) count = cVal;
+                        }
+                        if (isNaN(count)) {
+                            // Buscar cualquier celda con número puro de alumnos (generalmente celda 3 o 4)
+                            for (let i = 2; i < cells.length; i++) {
+                                const t = cells[i].innerText.trim();
+                                if (/^\d{1,4}$/.test(t)) {
+                                    count = parseInt(t, 10);
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (name && !isNaN(count)) {
+                            map[name] = count;
+                        }
                     }
                 });
             }
         } catch (e) {
             console.warn('⚠️ [ZipGrade] No se pudo obtener el mapa de estudiantes por clase:', e);
         }
-        if (ok) {
+        if (ok && Object.keys(map).length > 0) {
             zgClassStudentCountCache = map;
             zgCacheSet('zg_class_map', map);
         }
@@ -1589,7 +1609,7 @@
                 const headers = Array.from(theadRow.querySelectorAll('th, td'));
                 const classIdx = headers.findIndex(h => {
                     const txt = h.innerText.toLowerCase();
-                    return txt.includes('class') || txt.includes('clase');
+                    return txt.includes('class') || txt.includes('clase') || txt.includes('curso');
                 });
                 if (classIdx !== -1 && row.cells[classIdx]) {
                     return row.cells[classIdx].innerText.trim();
@@ -1690,24 +1710,41 @@
     function getQuizClassStudentCount(quizClassText, classMap) {
         if (!quizClassText || !classMap) return 0;
         const quizClassNorm = normalizeClassName(quizClassText);
+        const quizWeight = extractGradeWeight(quizClassText);
 
-        // 1. Coincidencia exacta de nombre en /classes/ (aunque la clase tenga 0 alumnos):
-        //    si el quiz pertenece a esa clase exacta, ese es el total (no se trata como rango).
+        // 1. Coincidencia exacta de nombre o normalizada en /classes/
         for (const [clsName, count] of Object.entries(classMap)) {
-            if (normalizeClassName(clsName) === quizClassNorm) {
+            const cNorm = normalizeClassName(clsName);
+            if (cNorm === quizClassNorm || cNorm === quizClassText.trim().toLowerCase()) {
                 return count;
             }
         }
 
-        // 2. Solo si no hay una clase exacta con ese nombre, intentar resolver como rango
-        //    sumando los estudiantes de las clases individuales correspondientes.
+        // 2. Coincidencia por peso académico (ej. 801 <-> 801 o 8-1)
+        if (quizWeight < 99999) {
+            for (const [clsName, count] of Object.entries(classMap)) {
+                const cWeight = extractGradeWeight(clsName);
+                if (cWeight === quizWeight) {
+                    return count;
+                }
+            }
+        }
+
+        // 3. Coincidencia por inclusión de texto (ej: "801" en "Curso 801")
+        for (const [clsName, count] of Object.entries(classMap)) {
+            const cNorm = normalizeClassName(clsName);
+            if (cNorm.includes(quizClassNorm) || quizClassNorm.includes(cNorm)) {
+                return count;
+            }
+        }
+
+        // 4. Resolución por rango de grados si aplica ("10° - 11°")
         const grades = parseQuizClassGrades(quizClassText);
         const isRange = grades.length > 1;
 
         let total = 0;
         if (isRange) {
             for (const [clsName, count] of Object.entries(classMap)) {
-                // Ignorar otras clases de tipo rango organizativo (que también tienen 0)
                 if (parseQuizClassGrades(clsName).length > 1) continue;
                 const w = extractGradeWeight(clsName);
                 if (w < 99999 && grades.includes(Math.floor(w / 100))) {
@@ -4403,11 +4440,11 @@
         return result;
     }
 
-    // Extrae el token de grado del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°")
+    // Extrae el token de grado/clase del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°" o "E.S.A. | 601 | P3 | S1" -> "601")
     function extractGradeFromQuizName(nameVal) {
         if (!nameVal) return '';
         const parts = String(nameVal).split('|').map(p => p.trim());
-        const idx = parts.findIndex(isGradeToken);
+        const idx = findQuizClassTokenIdx(parts);
         return idx !== -1 ? parts[idx] : '';
     }
 
@@ -4850,9 +4887,38 @@
     // ==========================================
     const ZG_ROSTER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos de caché para listas de estudiantes de clases
 
-    async function fetchQuizClassesRoster(classNames, bypassCache = false) {
-        if (!classNames || classNames.length === 0) return [];
-        const normTargetNames = classNames.map(n => normalizeClassName(n));
+    function isQuizClassMatch(a, b) {
+        if (!a || !b) return false;
+        const normA = normalizeClassName(a);
+        const normB = normalizeClassName(b);
+        if (!normA || !normB) return false;
+        if (normA === normB) return true;
+
+        const regexA = new RegExp(`\\b${normA}\\b`, 'i');
+        const regexB = new RegExp(`\\b${normB}\\b`, 'i');
+        if (regexA.test(normB) || regexB.test(normA)) return true;
+
+        const weightA = extractGradeWeight(a);
+        const weightB = extractGradeWeight(b);
+        if (weightA < 99999 && weightB < 99999 && weightA === weightB) return true;
+
+        return false;
+    }
+
+    async function fetchQuizClassesRoster(classesInput, bypassCache = false) {
+        if (!classesInput || classesInput.length === 0) return [];
+
+        // Normalizar clases a objetos { name: string, url: string }
+        const classObjs = classesInput.map(item => {
+            if (typeof item === 'object' && item !== null) {
+                return { name: item.name || '', url: item.url || '' };
+            }
+            return { name: String(item).trim(), url: '' };
+        }).filter(c => Boolean(c.name));
+
+        if (classObjs.length === 0) return [];
+
+        const normTargetNames = classObjs.map(n => normalizeClassName(n.name));
         const cacheKey = 'zg_roster_' + normTargetNames.sort().join('_');
         if (!bypassCache) {
             const cached = zgCacheGet(cacheKey, ZG_ROSTER_CACHE_TTL_MS);
@@ -4862,83 +4928,111 @@
         }
 
         try {
-            const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
-            if (res.status !== 200) return [];
-            const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-            const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr'));
             const matchedClassUrls = [];
 
-            rows.forEach(row => {
-                const nameEl = row.querySelector('td:nth-child(2) h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
-                const linkEl = row.querySelector('td:nth-child(2) a') || row.querySelector('a[href*="/classes/"]');
-                if (nameEl && linkEl) {
-                    const cName = nameEl.innerText.trim();
-                    const cNorm = normalizeClassName(cName);
+            // 1. Clases que ya traen su URL directa desde la página del quiz
+            classObjs.forEach(cls => {
+                if (cls.url && !cls.url.endsWith('/classes/') && !cls.url.endsWith('/classes')) {
+                    matchedClassUrls.push(cls);
+                }
+            });
 
-                    // 1. Coincidencia exacta de nombre normalizado
-                    let isMatch = normTargetNames.includes(cNorm);
+            // 2. Si alguna no tiene URL directa o faltan, buscar en https://www.zipgrade.com/classes/
+            const needUrl = classObjs.filter(cls => !cls.url || cls.url.endsWith('/classes/') || cls.url.endsWith('/classes'));
+            if (needUrl.length > 0) {
+                const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/classes/' }, 30000);
+                if (res.status === 200) {
+                    const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+                    const rows = Array.from(doc.querySelectorAll('#subjectTable tbody tr, table tbody tr'));
 
-                    // 2. Coincidencia si el target es un rango explícito (ej: "10° - 11°")
-                    if (!isMatch) {
-                        for (const tName of classNames) {
-                            const grades = parseQuizClassGrades(tName);
-                            if (grades.length > 1) {
-                                const w = extractGradeWeight(cName);
-                                if (w < 99999 && grades.includes(Math.floor(w / 100))) {
+                    rows.forEach(row => {
+                        // En /classes/, cada curso tiene enlaces a /classes/<id>/ o botones de hoja
+                        const linkEl = row.querySelector('a[href*="/classes/"], a[href*="/class/"]');
+                        const nameEl = row.querySelector('h4') || row.querySelector('td:nth-child(2) a') || row.querySelector('td:nth-child(2)');
+                        const sheetSelect = row.querySelector('select[data-class-id]');
+                        const downloadLinkEl = row.querySelector('a[href*="/answerSheetPacks/"]');
+
+                        let cName = nameEl ? nameEl.innerText.trim() : '';
+                        let href = linkEl ? linkEl.getAttribute('href') : '';
+
+                        if (!href && sheetSelect && sheetSelect.dataset.classId) {
+                            href = `/classes/${sheetSelect.dataset.classId}/`;
+                        }
+                        if (!href && downloadLinkEl) {
+                            const m = downloadLinkEl.getAttribute('href').match(/\/classes\/([^\/]+)\//);
+                            if (m) href = `/classes/${m[1]}/`;
+                        }
+
+                        if (cName && href) {
+                            let isMatch = false;
+                            for (const target of needUrl) {
+                                if (isQuizClassMatch(cName, target.name)) {
                                     isMatch = true;
                                     break;
                                 }
                             }
+
+                            if (isMatch) {
+                                const fullUrl = new URL(href, window.location.origin).href;
+                                if (!matchedClassUrls.some(m => m.url === fullUrl)) {
+                                    matchedClassUrls.push({ name: cName, url: fullUrl });
+                                }
+                            }
                         }
-                    }
-
-                    if (isMatch) {
-                        const href = linkEl.getAttribute('href');
-                        const fullUrl = new URL(href, window.location.origin).href;
-                        matchedClassUrls.push({ name: cName, url: fullUrl });
-                    }
+                    });
                 }
-            });
+            }
 
-            // Descargar los estudiantes de cada clase encontrada en paralelo
+            // Descargar los estudiantes de cada clase encontrada
             const classResults = await Promise.all(matchedClassUrls.map(async (cls) => {
                 try {
                     const cRes = await customRequest({ method: 'GET', url: cls.url }, 30000);
                     if (cRes.status !== 200) return [];
                     const cDoc = new DOMParser().parseFromString(cRes.responseText, 'text/html');
-                    const sRows = Array.from(cDoc.querySelectorAll('table tbody tr'));
+                    const sRows = Array.from(cDoc.querySelectorAll('tbody tr, table tr')).filter(r => {
+                        const cells = Array.from(r.querySelectorAll('td'));
+                        if (cells.length < 2) return false;
+                        const firstTxt = cells[0].innerText.trim();
+                        if (/^(?:class\s*name|name|created|date|number\s*of|students\s*:|total|acciones|actions):?$/i.test(firstTxt)) return false;
+                        if (r.querySelector('th') && !r.querySelector('td')) return false;
+                        return true;
+                    });
                     const students = [];
+
                     sRows.forEach(sRow => {
                         const cells = Array.from(sRow.querySelectorAll('td'));
                         if (cells.length >= 2) {
-                            const idCell = cells.find(c => /^\s*\d{3,12}\s*$/.test(c.innerText.trim()));
-                            const nameCell = cells.find(c => c.querySelector('a[href*="/students/"]') || (c.innerText.trim().length > 2 && !/^\d+$/.test(c.innerText.trim()) && !/edit|delete|action/i.test(c.innerText)));
-
                             let studentId = '';
                             let studentName = '';
 
-                            if (idCell) studentId = idCell.innerText.trim();
-                            if (nameCell) studentName = nameCell.innerText.trim();
+                            const sLink = sRow.querySelector('a[href*="/students/"], a[href*="/student/"]');
+                            if (sLink) studentName = sLink.innerText.trim();
 
-                            const sLink = sRow.querySelector('a[href*="/students/"]');
-                            if (sLink && !studentName) {
-                                studentName = sLink.innerText.trim();
+                            for (let c of cells) {
+                                const txt = c.innerText.trim();
+                                if (/^\d{3,12}$/.test(txt)) {
+                                    studentId = txt;
+                                    break;
+                                }
                             }
 
-                            if (!studentId && cells[1]) studentId = cells[1].innerText.trim();
-                            if (!studentName && cells[2]) studentName = cells[2].innerText.trim();
+                            if (!studentName) {
+                                const nameCands = cells.map(c => c.innerText.trim()).filter(t => t.length > 2 && !/^\d+$/.test(t) && !/edit|delete|eliminar|editar|action|detalles|ver|view/i.test(t));
+                                if (nameCands.length > 0) {
+                                    studentName = nameCands[0];
+                                }
+                            }
 
                             if (studentId || studentName) {
-                                if (!/no data|no records/i.test(studentId + studentName)) {
-                                    students.push({
-                                        id: studentId,
-                                        name: studentName,
-                                        className: cls.name
-                                    });
-                                }
+                                students.push({
+                                    id: studentId,
+                                    name: studentName,
+                                    className: cls.name
+                                });
                             }
                         }
                     });
+                    console.log(`📥 [ZipGrade] Obtenidos ${students.length} estudiantes de clase "${cls.name}" (${cls.url})`);
                     return students;
                 } catch (e) {
                     console.warn(`⚠️ Error obteniendo estudiantes de clase ${cls.name}:`, e);
@@ -4946,7 +5040,20 @@
                 }
             }));
 
-            const allStudents = classResults.flat();
+            let allStudents = classResults.flat();
+            if (allStudents.length === 0) {
+                // Fallback directo a /students/ si no se pudieron obtener desde /classes/<id>/
+                const dir = await fetchAllStudentsDirectory(bypassCache);
+                if (dir.length > 0) {
+                    const targetNorms = classObjs.map(c => normalizeClassName(c.name)).filter(Boolean);
+                    allStudents = dir.filter(st => {
+                        if (!st.className) return false;
+                        const studentClasses = st.className.split(/[,;\n]+/).map(c => normalizeClassName(c)).filter(Boolean);
+                        return studentClasses.some(sc => targetNorms.includes(sc));
+                    });
+                }
+            }
+
             if (allStudents.length > 0) {
                 zgCacheSet(cacheKey, allStudents);
             }
@@ -4969,17 +5076,31 @@
             const res = await customRequest({ method: 'GET', url: 'https://www.zipgrade.com/students/' }, 35000);
             if (res.status !== 200) return [];
             const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-            const rows = Array.from(doc.querySelectorAll('#studentTable tbody tr'));
+            const rows = Array.from(doc.querySelectorAll('#studentTable tbody tr, table tbody tr'));
             const list = [];
             rows.forEach(r => {
                 const cells = Array.from(r.querySelectorAll('td'));
-                if (cells.length >= 3) {
+                if (cells.length >= 2) {
                     // studentTable: [0: Checkbox, 1: Student ID, 2: Name/External, 3: First Name, 4: Last Name, 5: Classes]
-                    const idText = (cells[1] ? cells[1].innerText : '').trim();
+                    let idText = (cells[1] ? cells[1].innerText : '').trim().replace(/[^0-9]/g, '');
                     const nameCell = cells[2];
                     const firstText = (cells[3] ? cells[3].innerText : '').trim();
                     const lastText = (cells[4] ? cells[4].innerText : '').trim();
-                    const classText = (cells[5] ? cells[5].innerText : '').trim();
+                    let classText = (cells[5] ? cells[5].innerText : '').trim();
+
+                    if (!idText) {
+                        for (let c of cells) {
+                            const txt = c.innerText.trim();
+                            if (/^\d{3,12}$/.test(txt)) {
+                                idText = txt;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!classText && cells.length >= 4) {
+                        classText = cells[cells.length - 1].innerText.trim();
+                    }
 
                     let fullName = '';
                     const link = nameCell ? nameCell.querySelector('a') : null;
@@ -5014,35 +5135,83 @@
         if (window.location.pathname.includes('/paper/')) return;
         if (document.getElementById('zg-missing-students-card')) return;
 
-        // 1. Detectar clases asignadas en el detalle del quiz
-        let quizClasses = [];
-        const tds = Array.from(document.querySelectorAll('td'));
-        for (let i = 0; i < tds.length; i++) {
-            const txt = tds[i].innerText.trim();
-            if (/^class(?:es)?:?$/i.test(txt)) {
-                const valTd = tds[i].nextElementSibling;
-                if (valTd) {
-                    quizClasses = Array.from(valTd.querySelectorAll('a'))
-                        .map(a => a.innerText.trim())
-                        .filter(Boolean);
-                    if (quizClasses.length === 0) {
-                        const rawText = valTd.innerText.trim();
-                        if (rawText && rawText !== '-') {
-                            quizClasses = rawText.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+        function detectQuizClassObjects() {
+            const results = [];
+
+            // 1. Fila de Class / Classes / Curso en la tabla de detalles del Quiz
+            const tds = Array.from(document.querySelectorAll('td, th'));
+            for (let i = 0; i < tds.length; i++) {
+                const txt = tds[i].innerText.trim().toLowerCase();
+                if (/^(?:class(?:es)?|curso(?:s)?(?:\s*[\/\-]\s*clase(?:s)?)?|clase(?:s)?):?$/i.test(txt)) {
+                    const valTd = tds[i].nextElementSibling;
+                    if (valTd) {
+                        const innerLinks = Array.from(valTd.querySelectorAll('a[href*="/classes/"], a[href*="/class/"]'));
+                        innerLinks.forEach(a => {
+                            const name = a.innerText.trim();
+                            const href = a.getAttribute('href');
+                            if (name && !/all classes|cursos|classes|export|add|none|ninguno/i.test(name)) {
+                                const fullUrl = href ? new URL(href, window.location.origin).href : '';
+                                results.push({ name: name, url: fullUrl });
+                            }
+                        });
+                        if (results.length === 0) {
+                            const rawText = valTd.innerText.trim();
+                            if (rawText && rawText !== '-' && !/none|ninguno/i.test(rawText)) {
+                                rawText.split(/[,;\n]+/).forEach(s => {
+                                    const n = s.trim();
+                                    if (n) results.push({ name: n, url: '' });
+                                });
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // 2. Extraer del nombre del quiz en la tabla de detalles ("E.S.A. | 601 | P3 | S2")
+            if (results.length === 0) {
+                for (let i = 0; i < tds.length; i++) {
+                    const txt = tds[i].innerText.trim().toLowerCase();
+                    if (/^(?:name|nombre|quiz\s*name):?$/i.test(txt)) {
+                        const valTd = tds[i].nextElementSibling;
+                        if (valTd) {
+                            const token = extractGradeFromQuizName(valTd.innerText.trim());
+                            if (token) {
+                                results.push({ name: token, url: '' });
+                                break;
+                            }
                         }
                     }
                 }
-                break;
             }
+
+            // 3. Extraer del encabezado H1/H2 o título de página
+            if (results.length === 0) {
+                document.querySelectorAll('h1, h2, h3').forEach(h => {
+                    const token = extractGradeFromQuizName(h.innerText || '');
+                    if (token) results.push({ name: token, url: '' });
+                });
+            }
+
+            if (results.length === 0) {
+                const token = extractGradeFromQuizName(document.title);
+                if (token) results.push({ name: token, url: '' });
+            }
+
+            // Desduplicar
+            const unique = [];
+            const seen = new Set();
+            results.forEach(r => {
+                const norm = normalizeClassName(r.name);
+                if (norm && !seen.has(norm)) {
+                    seen.add(norm);
+                    unique.push(r);
+                }
+            });
+            return unique;
         }
 
-        // Si no se encontró en la tabla de detalles, intentar extraer del nombre del quiz "E.S.A. | 601 | P3 | S1"
-        if (quizClasses.length === 0) {
-            const titleEl = document.querySelector('h1, h2, h3, h4');
-            const pageText = document.title + ' ' + (titleEl ? titleEl.innerText : '');
-            const classToken = extractGradeFromQuizName(pageText) || '';
-            if (classToken) quizClasses.push(classToken);
-        }
+        let detectedClasses = detectQuizClassObjects();
 
         const gradedTable = document.getElementById('gradedPapers');
         const anchor = gradedTable ? (gradedTable.closest('.dataTables_wrapper') || gradedTable) : document.querySelector('.table-responsive') || document.querySelector('table');
@@ -5061,16 +5230,18 @@
             box-sizing: border-box;
         `;
 
-        const displayClassName = quizClasses.length > 0 ? quizClasses.join(', ') : 'Curso';
+        const initialDisplayName = detectedClasses.length > 0 ? detectedClasses.map(c => c.name).join(', ') : 'Curso';
 
         container.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
-                        <i class="fa fa-users" style="color:#2563eb;"></i> Estudiantes Faltantes <span style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(displayClassName)})</span>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <span id="zg-missing-title" style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
+                        <i class="fa fa-bell" style="color:#2563eb;"></i> Novedades <span id="zg-course-badge-name" style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(initialDisplayName)})</span>
                     </span>
-                    <span id="zg-missing-badge" style="font-size:11px; font-weight:700; padding:2px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
+                    <span id="zg-missing-badge" style="font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
                         <i class="fa fa-spinner fa-spin"></i> Analizando...
+                    </span>
+                    <span id="zg-anomalies-badge" style="display:none; font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#ffe4e6; color:#9f1239;">
                     </span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
@@ -5081,106 +5252,188 @@
             </div>
             <div id="zg-missing-results" style="display:block; margin-top:14px; border-top:1px solid #f1f5f9; padding-top:14px;">
                 <div id="zg-missing-summary" style="font-size:13px; color:#64748b; margin-bottom:10px; font-weight:500;">
-                    <i class="fa fa-spinner fa-spin"></i> Obteniendo lista de estudiantes del curso <strong>${escapeHtml(displayClassName)}</strong>...
+                    <i class="fa fa-spinner fa-spin"></i> Obteniendo lista de estudiantes...
                 </div>
+                <div id="zg-anomalies-section" style="display:none; margin-bottom:16px;"></div>
                 <div id="zg-missing-table-container" style="max-height:360px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; width:100%;"></div>
             </div>
         `;
 
-        // Inicialmente oculto hasta confirmar si realmente faltan estudiantes
         container.style.display = 'none';
         anchor.parentNode.insertBefore(container, anchor);
 
         const checkBtn = container.querySelector('#zg-btn-check-missing');
         const resultsDiv = container.querySelector('#zg-missing-results');
         const badgeEl = container.querySelector('#zg-missing-badge');
+        const anomaliesBadgeEl = container.querySelector('#zg-anomalies-badge');
         const summaryEl = container.querySelector('#zg-missing-summary');
+        const anomaliesSection = container.querySelector('#zg-anomalies-section');
         const tableContainer = container.querySelector('#zg-missing-table-container');
+        const courseBadgeName = container.querySelector('#zg-course-badge-name');
 
         async function runMissingAnalysis(forceRefresh = false) {
             checkBtn.disabled = true;
             badgeEl.innerText = 'Cargando...';
             badgeEl.style.background = '#e0e7ff';
             badgeEl.style.color = '#3730a3';
+            anomaliesBadgeEl.style.display = 'none';
+            anomaliesSection.style.display = 'none';
+            anomaliesSection.innerHTML = '';
 
             try {
-                // 1. Obtener lista de estudiantes que YA presentaron en este quiz (de #gradedPapers)
-                const scannedStudentIds = new Set();
-                const scannedStudentNames = new Set();
+                // Re-detectar clases
+                detectedClasses = detectQuizClassObjects();
 
-                const paperRows = Array.from(document.querySelectorAll('#gradedPapers tbody tr'));
-                paperRows.forEach(r => {
-                    const cells = Array.from(r.querySelectorAll('td'));
-                    if (cells.length >= 2) {
-                        const sLink = r.querySelector('a[href*="/students/"]');
-                        if (sLink) {
-                            scannedStudentNames.add(normalizeClassName(sLink.innerText.trim()));
-                        }
-                        cells.forEach(c => {
-                            const txt = c.innerText.trim();
-                            if (/^\d{3,12}$/.test(txt)) {
-                                scannedStudentIds.add(txt);
-                            }
-                        });
-                        if (cells[1]) scannedStudentNames.add(normalizeClassName(cells[1].innerText.trim()));
+                // 0. Si la tabla de gradedPapers tiene paginación de DataTables, intentar poner 'All'
+                const gradedWrapper = document.querySelector('#gradedPapers_wrapper');
+                if (gradedWrapper) {
+                    const selectEntries = gradedWrapper.querySelector('select[name*="_length"]');
+                    if (selectEntries && selectEntries.value !== '-1' && selectEntries.querySelector('option[value="-1"]')) {
+                        selectEntries.value = '-1';
+                        selectEntries.dispatchEvent(new Event('change', { bubbles: true }));
+                        await new Promise(r => setTimeout(r, 200));
+                    }
+                }
+
+                // 1. Identificar columnas EXACTAS en #gradedPapers
+                let idColIdx = 1;
+                let nameColIdx = 2;
+
+                const ths = Array.from(document.querySelectorAll('#gradedPapers thead th'));
+                ths.forEach((th, idx) => {
+                    const txt = th.innerText.trim().toLowerCase();
+                    if (txt === 'id' || txt.includes('student id') || txt.includes('código') || txt === 'id / código') {
+                        idColIdx = idx;
+                    } else if (txt.includes('estudiante') || txt.includes('name') || txt.includes('nombre') || txt.includes('student')) {
+                        nameColIdx = idx;
                     }
                 });
 
-                console.log(`🔍 [ZipGrade] Escaneados en el quiz: ${scannedStudentIds.size} IDs, ${scannedStudentNames.size} nombres.`);
+                const cleanNormalizeName = (str) => {
+                    if (!str) return '';
+                    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                        .replace(/[^\w\s]/gi, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim().toLowerCase();
+                };
 
-                // 2. Obtener lista de estudiantes que pertenecen a la(s) clase(s) del quiz
-                let roster = [];
-                if (quizClasses.length > 0) {
-                    roster = await fetchQuizClassesRoster(quizClasses, forceRefresh === true);
-                }
+                const getNormalizedVariants = (name) => {
+                    if (!name) return [];
+                    const clean = cleanNormalizeName(name);
+                    const variants = new Set();
+                    if (clean) variants.add(clean);
+                    if (name.includes(',')) {
+                        const parts = name.split(',').map(p => cleanNormalizeName(p)).filter(Boolean);
+                        if (parts.length === 2) {
+                            variants.add(`${parts[1]} ${parts[0]}`.replace(/\s+/g, ' ').trim());
+                            variants.add(`${parts[0]} ${parts[1]}`.replace(/\s+/g, ' ').trim());
+                        }
+                    }
+                    return Array.from(variants);
+                };
 
-                // Si no se obtuvo vía la página de cada clase, filtrar desde el directorio de /students/
-                if (roster.length === 0) {
-                    const allStudents = await fetchAllStudentsDirectory(forceRefresh === true);
-                    if (quizClasses.length > 0) {
-                        const targetNorms = quizClasses.map(normalizeClassName);
+                const scannedPapers = [];
+                const scannedStudentIds = new Set();
+                const scannedStudentNames = new Set();
 
-                        // Filtrar ÚNICAMENTE los estudiantes cuya clase coincida exactamente con la asignada
-                        roster = allStudents.filter(st => {
-                            if (!st.className) return false;
-                            const studentClasses = st.className.split(/[,;\n]+/).map(normalizeClassName);
-                            return studentClasses.some(sc => targetNorms.includes(sc));
-                        });
+                const paperRows = Array.from(document.querySelectorAll('#gradedPapers tbody tr'))
+                    .filter(r => !/no data|no records|there are no/i.test(r.textContent || ''));
 
-                        // Si el quiz tiene un rango de clases (ej: "10° - 11°")
-                        if (roster.length === 0) {
-                            for (const qClass of quizClasses) {
-                                const grades = parseQuizClassGrades(qClass);
-                                if (grades.length > 1) {
-                                    const matching = allStudents.filter(st => {
-                                        const w = extractGradeWeight(st.className);
-                                        return w < 99999 && grades.includes(Math.floor(w / 100));
-                                    });
-                                    roster.push(...matching);
+                paperRows.forEach(r => {
+                    const cells = Array.from(r.querySelectorAll('td'));
+                    if (cells.length > 0) {
+                        let studentId = cells[idColIdx] ? cells[idColIdx].innerText.trim().replace(/[^0-9]/g, '') : '';
+                        
+                        // Respaldo por si la columna no coincidió exactamente
+                        if (!studentId || studentId.length < 3) {
+                            for (let c of cells) {
+                                const txt = c.innerText.trim();
+                                if (/^\d{3,12}$/.test(txt)) {
+                                    studentId = txt;
+                                    break;
                                 }
                             }
                         }
+
+                        let studentName = '';
+                        const sLink = r.querySelector('a[href*="/paper/"], a[href*="/students/"], a[href*="/student/"]');
+                        if (sLink) {
+                            studentName = sLink.innerText.trim();
+                        } else if (cells[nameColIdx]) {
+                            studentName = cells[nameColIdx].innerText.trim();
+                        }
+
+                        if (studentId) {
+                            scannedStudentIds.add(studentId);
+                            const parsedId = parseInt(studentId, 10);
+                            if (!isNaN(parsedId)) {
+                                scannedStudentIds.add(String(parsedId));
+                            }
+                        }
+                        if (studentName) {
+                            getNormalizedVariants(studentName).forEach(v => scannedStudentNames.add(v));
+                        }
+
+                        scannedPapers.push({
+                            id: studentId,
+                            name: studentName,
+                            rowEl: r
+                        });
                     }
+                });
+
+                const parsedScanned = scannedPapers.length;
+
+                // 2. Descargar Roster oficial de la(s) clase(s) asignadas y obtener total desde /classes/ (mismo cálculo que Status)
+                const classMap = await getClassStudentCountMap();
+                let roster = [];
+                if (detectedClasses.length > 0) {
+                    roster = await fetchQuizClassesRoster(detectedClasses, forceRefresh === true);
                 }
 
-                // Quitar duplicados en roster
+                // Desduplicar Roster oficial
                 const uniqueRosterMap = new Map();
                 roster.forEach(st => {
-                    const key = (st.id ? 'ID_' + st.id : 'NAME_' + normalizeClassName(st.name));
+                    const cleanId = st.id ? String(st.id).replace(/[^0-9]/g, '') : '';
+                    const key = cleanId ? 'ID_' + cleanId : 'NAME_' + cleanNormalizeName(st.name);
                     if (!uniqueRosterMap.has(key)) {
                         uniqueRosterMap.set(key, st);
                     }
                 });
                 const uniqueRoster = Array.from(uniqueRosterMap.values());
 
-                // 3. Determinar quiénes faltan de ese curso
+                const displayClassName = detectedClasses.length > 0 ? detectedClasses.map(c => c.name).join(', ') : (uniqueRoster[0] ? uniqueRoster[0].className : 'Curso');
+                if (courseBadgeName) courseBadgeName.innerText = `(${displayClassName})`;
+
+                // Total oficial calculado idéntico a la columna de Status de la lista de quizzes
+                const classExpectedTotal = getQuizClassStudentCount(displayClassName, classMap);
+                const totalCourse = uniqueRoster.length > 0 ? uniqueRoster.length : (classExpectedTotal > 0 ? classExpectedTotal : 0);
+
+                // 3. Identificar ESTUDIANTES FALTANTES (están en la lista oficial pero NO en los escaneados)
                 const missingStudents = uniqueRoster.filter(st => {
-                    const idMatch = st.id && scannedStudentIds.has(st.id);
-                    const nameMatch = st.name && scannedStudentNames.has(normalizeClassName(st.name));
-                    return !idMatch && !nameMatch;
+                    const cleanId = st.id ? String(st.id).replace(/[^0-9]/g, '') : '';
+                    const cleanIdNum = cleanId ? String(parseInt(cleanId, 10)) : '';
+
+                    // Si el estudiante del roster tiene ID, chequear coincidencia por ID
+                    if (cleanId) {
+                        if (scannedStudentIds.has(cleanId) || (cleanIdNum && scannedStudentIds.has(cleanIdNum))) {
+                            return false; // Presente por ID
+                        }
+                    }
+
+                    // Si no coincidió por ID (o no tenía ID), chequear coincidencia exacta de nombre completo
+                    if (st.name) {
+                        const variants = getNormalizedVariants(st.name);
+                        const nameMatch = variants.some(v => scannedStudentNames.has(v));
+                        if (nameMatch) {
+                            return false; // Presente por coincidencia exacta de nombre
+                        }
+                    }
+
+                    return true; // Falta
                 });
 
-                // Ordenar faltantes por código numérico de menor a mayor
+                // Ordenar faltantes por ID numérico ascendente
                 missingStudents.sort((a, b) => {
                     const idA = parseInt(String(a.id).replace(/[^0-9]/g, ''), 10);
                     const idB = parseInt(String(b.id).replace(/[^0-9]/g, ''), 10);
@@ -5188,77 +5441,266 @@
                     return (a.name || '').localeCompare(b.name || '');
                 });
 
-                const totalCourse = uniqueRoster.length;
-                const scannedCount = totalCourse - missingStudents.length;
+                // 4. Identificar NOVEDADES / ANOMALÍAS (Hojas escaneadas que NO pertenecen a este curso)
+                const anomalies = [];
+                if (uniqueRoster.length > 0) {
+                    const rosterIdSet = new Set();
+                    const rosterNameSet = new Set();
 
-                // 4. Renderizar resultados: solo mostrar el widget si REALMENTE faltan estudiantes
-                if (missingStudents.length === 0) {
+                    uniqueRoster.forEach(st => {
+                        const cleanId = st.id ? String(st.id).replace(/[^0-9]/g, '') : '';
+                        if (cleanId) {
+                            rosterIdSet.add(cleanId);
+                            const num = parseInt(cleanId, 10);
+                            if (!isNaN(num)) rosterIdSet.add(String(num));
+                        }
+                        if (st.name) {
+                            getNormalizedVariants(st.name).forEach(v => rosterNameSet.add(v));
+                        }
+                    });
+
+                    scannedPapers.forEach(sp => {
+                        const cleanId = sp.id ? String(sp.id).replace(/[^0-9]/g, '') : '';
+                        const cleanIdNum = cleanId ? String(parseInt(cleanId, 10)) : '';
+
+                        const inRosterById = cleanId && (rosterIdSet.has(cleanId) || (cleanIdNum && rosterIdSet.has(cleanIdNum)));
+                        
+                        let inRosterByName = false;
+                        if (sp.name) {
+                            const variants = getNormalizedVariants(sp.name);
+                            inRosterByName = variants.some(v => rosterNameSet.has(v));
+                        }
+
+                        if (!inRosterById && !inRosterByName) {
+                            anomalies.push({
+                                id: sp.id || '-',
+                                name: sp.name || 'Estudiante sin nombre',
+                                actualClass: 'No pertenece a ' + displayClassName,
+                                reason: `No está en la lista oficial de ${displayClassName}`,
+                                rowEl: sp.rowEl
+                            });
+
+                            // Marcar fila en #gradedPapers con un distintivo visual suave
+                            if (sp.rowEl) {
+                                sp.rowEl.style.backgroundColor = '#fffbeb';
+                                const firstTd = sp.rowEl.querySelector('td:nth-child(2)') || sp.rowEl.querySelector('td');
+                                if (firstTd && !firstTd.querySelector('.zg-anomaly-tag')) {
+                                    const tag = document.createElement('span');
+                                    tag.className = 'zg-anomaly-tag';
+                                    tag.style.cssText = 'display:inline-block; font-size:10px; font-weight:700; color:#b45309; background:#fef3c7; border:1px solid #fde68a; border-radius:4px; padding:1px 5px; margin-left:6px;';
+                                    tag.innerHTML = `<i class="fa fa-exclamation-triangle"></i> Novedad`;
+                                    firstTd.appendChild(tag);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                let nMissing = 0;
+                let scannedOfficialCount = parsedScanned;
+
+                if (uniqueRoster.length > 0) {
+                    nMissing = missingStudents.length;
+                    scannedOfficialCount = Math.max(0, uniqueRoster.length - missingStudents.length);
+                } else if (totalCourse > 0) {
+                    scannedOfficialCount = Math.min(parsedScanned, totalCourse);
+                    nMissing = Math.max(0, totalCourse - parsedScanned);
+                }
+
+                const isCompleted = totalCourse > 0 ? (nMissing === 0 && (uniqueRoster.length > 0 || parsedScanned >= totalCourse)) : (parsedScanned > 0);
+
+                console.log(`📊 [ZipGrade] Curso: "${displayClassName}" | Roster: ${totalCourse} | Escaneados: ${parsedScanned} | Faltantes: ${nMissing} | Novedades: ${anomalies.length}`);
+
+                // 5. RENDERIZAR RESULTADOS
+                if (totalCourse === 0 && parsedScanned === 0) {
                     container.style.display = 'none';
-                    tableContainer.innerHTML = '';
-                    console.log('✅ [ZipGrade] No falta ningún estudiante; panel de faltantes oculto.');
+                    return;
+                }
+
+                container.style.display = 'block';
+                resultsDiv.style.display = 'block';
+
+                // Badges superiores
+                if (totalCourse > 0) {
+                    if (isCompleted) {
+                        badgeEl.innerText = `¡Completado! (${scannedOfficialCount}/${totalCourse})`;
+                        badgeEl.style.background = '#dcfce7';
+                        badgeEl.style.color = '#166534';
+                    } else {
+                        const faltanTxt = nMissing === 1 ? 'Falta 1 de' : `Faltan ${nMissing} de`;
+                        badgeEl.innerText = `${faltanTxt} ${totalCourse}`;
+                        badgeEl.style.background = '#fef3c7';
+                        badgeEl.style.color = '#92400e';
+                    }
                 } else {
-                    const nMissing = missingStudents.length;
-                    const faltanTxt = nMissing === 1 ? 'Falta 1 de' : `Faltan ${nMissing} de`;
-                    const estudianteWord = nMissing === 1 ? 'estudiante' : 'estudiantes';
-                    const faltaVerbo = nMissing === 1 ? 'falta' : 'faltan';
+                    badgeEl.innerText = `¡Completado! (${parsedScanned}/${parsedScanned})`;
+                    badgeEl.style.background = '#dcfce7';
+                    badgeEl.style.color = '#166534';
+                }
 
-                    container.style.display = 'block';
-                    resultsDiv.style.display = 'block';
+                // 5. UNIFICAR NOVEDADES (Faltantes y Sobrantes en una sola lista)
+                const allNovedades = [];
+                
+                // Agregar sobrantes (anomalías)
+                anomalies.forEach(an => {
+                    allNovedades.push({
+                        id: an.id,
+                        name: an.name,
+                        className: an.actualClass || displayClassName,
+                        type: 'SOBRA',
+                        badgeHtml: `<span style="background:#ffe4e6; color:#9f1239; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fecdd3; display:inline-flex; align-items:center; gap:4px;"><i class="fa fa-exclamation-triangle"></i> SOBRA</span>`,
+                        reason: an.reason || `No pertenece a la lista oficial de ${displayClassName}`,
+                        rowBg: '#fff1f2'
+                    });
+                });
 
-                    badgeEl.innerText = `${faltanTxt} ${totalCourse}`;
-                    badgeEl.style.background = '#fef3c7';
-                    badgeEl.style.color = '#92400e';
+                // Agregar faltantes
+                missingStudents.forEach(st => {
+                    allNovedades.push({
+                        id: st.id || '-',
+                        name: st.name || 'Estudiante sin nombre',
+                        className: st.className || displayClassName,
+                        type: 'FALTA',
+                        badgeHtml: `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fca5a5; display:inline-flex; align-items:center; gap:4px;"><i class="fa fa-times-circle"></i> FALTA</span>`,
+                        reason: 'No tiene hoja escaneada (Sin calificar)',
+                        rowBg: '#ffffff'
+                    });
+                });
+
+                // Ordenar novedades numéricamente por ID de menor a mayor
+                allNovedades.sort((a, b) => {
+                    const idA = parseInt(String(a.id).replace(/[^0-9]/g, ''), 10);
+                    const idB = parseInt(String(b.id).replace(/[^0-9]/g, ''), 10);
+                    if (!isNaN(idA) && !isNaN(idB)) return idA - idB;
+                    return (a.name || '').localeCompare(b.name || '');
+                });
+
+                // 6. RENDERIZAR RESULTADOS UNIFICADOS
+                if (totalCourse === 0 && parsedScanned === 0) {
+                    container.style.display = 'none';
+                    return;
+                }
+
+                container.style.display = 'block';
+                resultsDiv.style.display = 'block';
+
+                // Badges superiores
+                if (totalCourse > 0) {
+                    if (isCompleted && anomalies.length === 0) {
+                        badgeEl.innerText = `¡Completado! (${scannedOfficialCount}/${totalCourse})`;
+                        badgeEl.style.background = '#dcfce7';
+                        badgeEl.style.color = '#166534';
+                    } else {
+                        const faltanTxt = nMissing === 1 ? 'Falta 1 de' : `Faltan ${nMissing} de`;
+                        badgeEl.innerText = `${faltanTxt} ${totalCourse}`;
+                        badgeEl.style.background = '#fee2e2';
+                        badgeEl.style.color = '#991b1b';
+                    }
+                } else {
+                    badgeEl.innerText = `¡Completado! (${parsedScanned}/${parsedScanned})`;
+                    badgeEl.style.background = '#dcfce7';
+                    badgeEl.style.color = '#166534';
+                }
+
+                if (anomalies.length > 0) {
+                    anomaliesBadgeEl.style.display = 'inline-block';
+                    anomaliesBadgeEl.innerHTML = `<i class="fa fa-exclamation-triangle"></i> ${anomalies.length} ${anomalies.length === 1 ? 'Sobrante' : 'Sobrantes'}`;
+                } else {
+                    anomaliesBadgeEl.style.display = 'none';
+                }
+
+                // Resumen principal
+                if (allNovedades.length === 0 && isCompleted) {
+                    summaryEl.innerHTML = `
+                        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; color:#166534; font-weight:600; display:flex; align-items:center; gap:8px;">
+                            <i class="fa fa-check-circle" style="font-size:16px;"></i> ¡Excelente! Todos los <strong>${totalCourse}</strong> estudiantes del curso <strong>${escapeHtml(displayClassName)}</strong> tienen su hoja calificada (sin novedades ni faltantes).
+                        </div>
+                    `;
+                    tableContainer.style.display = 'none';
+                    tableContainer.innerHTML = '';
+                    anomaliesSection.style.display = 'none';
+                } else {
+                    const copyBtnHtml = allNovedades.length > 0 ? `
+                        <button id="zg-copy-novedades-btn" type="button" class="btn btn-default btn-xs" style="border-radius:6px; font-weight:600; color:#991b1b; border-color:#fca5a5; background:#fff5f5;">
+                            <i class="fa fa-clipboard"></i> Copiar novedades (${allNovedades.length})
+                        </button>
+                    ` : '';
+
+                    let descParts = [];
+                    if (nMissing > 0) {
+                        descParts.push(`faltan <strong style="color:#b91c1c; font-size:13px;">${nMissing}</strong> estudiantes de ${totalCourse} (${scannedOfficialCount} calificados)`);
+                    }
+                    if (anomalies.length > 0) {
+                        descParts.push(`se detectaron <strong style="color:#9f1239; font-size:13px;">${anomalies.length}</strong> hojas sobrantes / ajenas`);
+                    }
 
                     summaryEl.innerHTML = `
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                             <span>
-                                En el curso <strong style="color:#1e293b;">${escapeHtml(displayClassName)}</strong> ${faltaVerbo} <strong style="color:#b45309; font-size:14px;">${nMissing}</strong> ${estudianteWord} de un total de <strong>${totalCourse}</strong> (${scannedCount} escaneados).
+                                En el curso <strong style="color:#1e293b;">${escapeHtml(displayClassName)}</strong>: ${descParts.join(' y ')}.
                             </span>
-                            <button id="zg-copy-missing-names" type="button" class="btn btn-default btn-xs" style="border-radius:4px; font-weight:600;">
-                                <i class="fa fa-clipboard"></i> Copiar lista de faltantes
-                            </button>
+                            ${copyBtnHtml}
                         </div>
                     `;
 
-                    let tableHtml = `
-                        <table class="table table-striped table-hover" style="margin:0; width:100%; table-layout:fixed; font-size:12px;">
-                            <thead style="background:#f8fafc; position:sticky; top:0; z-index:1;">
-                                <tr>
-                                    <th style="width:45px; text-align:center;">#</th>
-                                    <th style="width:130px;">ID Estudiante</th>
-                                    <th>Nombre del Estudiante</th>
-                                    <th style="width:110px; text-align:center;">Curso</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
-
-                    missingStudents.forEach((st, idx) => {
-                        tableHtml += `
-                            <tr>
-                                <td style="text-align:center; color:#64748b; font-weight:600;">${idx + 1}</td>
-                                <td style="font-weight:700; color:#1e293b;">${escapeHtml(st.id || '-')}</td>
-                                <td style="color:#0f172a; font-weight:600;">${escapeHtml(st.name || '-')}</td>
-                                <td style="color:#475569; text-align:center; font-weight:600;">${escapeHtml(st.className || displayClassName)}</td>
-                            </tr>
+                    // Renderizar TABLA ÚNICA DE NOVEDADES
+                    if (allNovedades.length > 0) {
+                        tableContainer.style.display = 'block';
+                        let tableHtml = `
+                            <div style="border:1px solid #fecdd3; border-radius:8px; overflow:hidden; background:#ffffff;">
+                                <table class="table table-striped table-hover" style="margin:0; width:100%; table-layout:fixed; font-size:12px;">
+                                    <thead style="background:#fff1f2; position:sticky; top:0; z-index:1; border-bottom:1px solid #fecdd3;">
+                                        <tr>
+                                            <th style="width:40px; text-align:center; color:#991b1b; font-weight:700;">#</th>
+                                            <th style="width:110px; color:#991b1b; font-weight:700;">ID Estudiante</th>
+                                            <th style="color:#991b1b; font-weight:700;">Nombre del Estudiante</th>
+                                            <th style="width:90px; text-align:center; color:#991b1b; font-weight:700;">Curso</th>
+                                            <th style="width:100px; text-align:center; color:#991b1b; font-weight:700;">Estado</th>
+                                            <th style="width:230px; color:#991b1b; font-weight:700;">Novedad / Detalle</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
                         `;
-                    });
 
-                    tableHtml += `</tbody></table>`;
-                    tableContainer.innerHTML = tableHtml;
-
-                    const copyListBtn = container.querySelector('#zg-copy-missing-names');
-                    if (copyListBtn) {
-                        copyListBtn.addEventListener('click', () => {
-                            const textToCopy = missingStudents.map((st, i) => `${i + 1}. [${st.id || '-'}] ${st.name} (${st.className || displayClassName})`).join('\n');
-                            navigator.clipboard.writeText(textToCopy).then(() => {
-                                showZgToast(`Se copiaron ${missingStudents.length} estudiantes faltantes al portapapeles.`, 'success');
-                            }).catch(() => {
-                                alert(textToCopy);
-                            });
+                        allNovedades.forEach((item, idx) => {
+                            tableHtml += `
+                                <tr style="background:${item.rowBg};">
+                                    <td style="text-align:center; color:#881337; font-weight:600;">${idx + 1}</td>
+                                    <td style="font-weight:700; color:#881337;">${escapeHtml(item.id)}</td>
+                                    <td style="color:#0f172a; font-weight:600;">${escapeHtml(item.name)}</td>
+                                    <td style="color:#475569; text-align:center; font-weight:600;">${escapeHtml(item.className)}</td>
+                                    <td style="text-align:center;">${item.badgeHtml}</td>
+                                    <td style="color:#7f1d1d; font-weight:500;">${escapeHtml(item.reason)}</td>
+                                </tr>
+                            `;
                         });
+
+                        tableHtml += `</tbody></table></div>`;
+                        tableContainer.innerHTML = tableHtml;
+
+                        const copyBtn = container.querySelector('#zg-copy-novedades-btn');
+                        if (copyBtn) {
+                            copyBtn.addEventListener('click', () => {
+                                const lines = [
+                                    `📋 NOVEDADES DEL QUIZ - Curso: ${displayClassName} (${allNovedades.length} novedades)`,
+                                    `   Resumen: ${missingStudents.length} faltante(s) | ${anomalies.length} sobrante(s)`,
+                                    `--------------------------------------------------`,
+                                    ...allNovedades.map((item, i) => `${i + 1}. [ID: ${item.id}] ${item.name} (${item.className}) - ESTADO: ${item.type} - DETALLE: ${item.reason}`)
+                                ];
+                                const textToCopy = lines.join('\n');
+                                navigator.clipboard.writeText(textToCopy).then(() => {
+                                    showZgToast(`Se copiaron ${allNovedades.length} novedades al portapapeles.`, 'success');
+                                }).catch(() => {
+                                    alert(textToCopy);
+                                });
+                            });
+                        }
+                    } else {
+                        tableContainer.style.display = 'none';
+                        tableContainer.innerHTML = '';
                     }
                 }
+
             } catch (err) {
                 console.error('❌ Error analizando estudiantes faltantes:', err);
                 container.style.display = 'block';
@@ -5687,7 +6129,98 @@
             else if (txt === 'Time' || txt === 'Fecha / Hora') th.innerHTML = '<small>Fecha / Hora</small>';
         });
 
-        // Formatear fechas/horas en las filas de #gradedPapers (ej: 2026/09/15 11:35AM -> 15/SEP/2026 11:35 A.M.)
+        function findGradedPapersIdColIndex(table) {
+            if (!table) return 1;
+            const ths = Array.from(table.querySelectorAll('thead th'));
+            for (let i = 0; i < ths.length; i++) {
+                const txt = ths[i].innerText.trim().toLowerCase();
+                if (txt === 'id' || txt.includes('student id') || txt.includes('código') || txt.includes('id / código')) {
+                    return i;
+                }
+            }
+            const firstRow = table.querySelector('tbody tr');
+            if (firstRow) {
+                const cells = Array.from(firstRow.querySelectorAll('td'));
+                for (let i = 0; i < cells.length; i++) {
+                    const txt = cells[i].innerText.trim();
+                    if (/^\d{2,15}$/.test(txt)) {
+                        return i;
+                    }
+                }
+            }
+            return 1;
+        }
+
+        // Ordenar SIEMPRE por el orden del Student ID (menor a mayor numéricamente)
+        function sortGradedPapersById() {
+            const table = document.getElementById('gradedPapers');
+            if (!table) return;
+
+            const idColIdx = findGradedPapersIdColIndex(table);
+
+            // 1. Vía jQuery DataTables API si está inicializado en la tabla
+            if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
+                try {
+                    const dt = window.jQuery(table).DataTable();
+                    const currentOrder = dt.order();
+                    if (!currentOrder || currentOrder.length === 0 || currentOrder[0][0] !== idColIdx || currentOrder[0][1] !== 'asc') {
+                        dt.order([idColIdx, 'asc']).draw();
+                        console.log(`✅ [ZipGrade] Tabla #gradedPapers ordenada automáticamente por ID (Columna ${idColIdx}) vía DataTables API.`);
+                        return;
+                    }
+                } catch (e) {
+                    console.warn("⚠️ No se pudo ordenar #gradedPapers vía DataTables:", e);
+                }
+            }
+
+            // 2. Si DataTables está presente en jQuery pero no respondió a .DataTable(), simular clic en th
+            const idTh = table.querySelectorAll('thead th')[idColIdx];
+            if (idTh && !idTh.classList.contains('sorting_asc')) {
+                try {
+                    if (typeof window.jQuery !== 'undefined') {
+                        window.jQuery(idTh).trigger('click');
+                    } else {
+                        idTh.click();
+                    }
+                } catch (e) {}
+            }
+
+            // 3. Ordenación directa en el DOM para garantizar orden numérico consistente (fallback)
+            const tbody = table.querySelector('tbody');
+            if (tbody) {
+                const rows = Array.from(tbody.querySelectorAll('tr')).filter(r => !/no data|no records/i.test(r.textContent || ''));
+                if (rows.length > 1) {
+                    let needsSort = false;
+                    for (let i = 0; i < rows.length - 1; i++) {
+                        const cellA = rows[i].children[idColIdx] ? rows[i].children[idColIdx].innerText.trim() : '';
+                        const cellB = rows[i+1].children[idColIdx] ? rows[i+1].children[idColIdx].innerText.trim() : '';
+                        const numA = parseInt(cellA.replace(/[^0-9]/g, ''), 10);
+                        const numB = parseInt(cellB.replace(/[^0-9]/g, ''), 10);
+                        const comp = (!isNaN(numA) && !isNaN(numB)) ? (numA - numB) : cellA.localeCompare(cellB, undefined, { numeric: true });
+                        if (comp > 0) {
+                            needsSort = true;
+                            break;
+                        }
+                    }
+                    if (needsSort) {
+                        rows.sort((rowA, rowB) => {
+                            const cellA = rowA.children[idColIdx] ? rowA.children[idColIdx].innerText.trim() : '';
+                            const cellB = rowB.children[idColIdx] ? rowB.children[idColIdx].innerText.trim() : '';
+                            const numA = parseInt(cellA.replace(/[^0-9]/g, ''), 10);
+                            const numB = parseInt(cellB.replace(/[^0-9]/g, ''), 10);
+                            if (!isNaN(numA) && !isNaN(numB)) {
+                                return numA - numB;
+                            }
+                            return cellA.localeCompare(cellB, undefined, { numeric: true });
+                        });
+                        rows.forEach(r => tbody.appendChild(r));
+                        console.log(`✅ [ZipGrade] Filas de #gradedPapers reordenadas por ID en el DOM.`);
+                    }
+                }
+            }
+        }
+
+        // Formatear fechas/horas en las filas de #gradedPapers y mantener ordenación por ID
         function formatGradedPapersDates() {
             document.querySelectorAll('#gradedPapers tbody tr').forEach(row => {
                 const cells = Array.from(row.querySelectorAll('td'));
@@ -5703,8 +6236,25 @@
                 }
             });
             translateDataTablesInfo();
+            sortGradedPapersById();
         }
         formatGradedPapersDates();
+
+        // Polling para asegurar la ordenación por ID después de que carguen los scripts de ZipGrade
+        let sortAttempts = 0;
+        const sortInterval = setInterval(() => {
+            sortAttempts++;
+            sortGradedPapersById();
+            if (sortAttempts >= 12) clearInterval(sortInterval);
+        }, 250);
+
+        if (typeof window.jQuery !== 'undefined') {
+            window.jQuery(document).on('init.dt', function(e, settings) {
+                if (settings && settings.nTable && settings.nTable.id === 'gradedPapers') {
+                    setTimeout(sortGradedPapersById, 50);
+                }
+            });
+        }
 
         // Observar cambios por paginación o búsqueda en DataTables de gradedPapers
         const gradedTbody = document.querySelector('#gradedPapers tbody');
@@ -6882,6 +7432,7 @@
         }
     } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
         const initQuizDetail = () => {
+            initQuizDetailPage();
             translateQuizDetailPage();
             initMissingStudentsInQuizDetail();
         };
