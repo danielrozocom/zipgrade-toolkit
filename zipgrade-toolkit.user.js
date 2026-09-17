@@ -109,11 +109,51 @@
                 width: 100% !important;
                 max-width: 100% !important;
                 table-layout: auto !important;
+                border-collapse: collapse !important;
+            }
+            #gradedPapers th,
+            #gradedPapers td {
+                padding: 6px 6px !important;
+                font-size: 12px !important;
+                vertical-align: middle !important;
+                box-sizing: border-box !important;
+            }
+            #gradedPapers th:first-child,
+            #gradedPapers td:first-child {
+                width: 28px !important;
+                max-width: 30px !important;
+                padding: 6px 2px !important;
+                text-align: center !important;
+            }
+            #gradedPapers th:nth-child(2),
+            #gradedPapers td:nth-child(2) {
+                white-space: nowrap !important;
+                text-align: center !important;
+            }
+            #gradedPapers th:nth-child(3),
+            #gradedPapers td:nth-child(3) {
+                text-align: left !important;
+            }
+            #gradedPapers th:nth-child(4),
+            #gradedPapers td:nth-child(4),
+            #gradedPapers th:nth-child(5),
+            #gradedPapers td:nth-child(5),
+            #gradedPapers th:nth-child(6),
+            #gradedPapers td:nth-child(6) {
+                text-align: center !important;
+                white-space: nowrap !important;
+            }
+            #gradedPapers th:last-child,
+            #gradedPapers td:last-child {
+                text-align: center !important;
+                white-space: nowrap !important;
+                font-size: 11px !important;
             }
             #gradedPapers_wrapper,
             #itemAnalysisTable_wrapper {
                 overflow-x: auto !important;
                 width: 100% !important;
+                max-width: 100% !important;
             }
             #zg-quiz-master-check,
             #zg-master-check {
@@ -5133,7 +5173,7 @@
 
     function initMissingStudentsInQuizDetail() {
         if (window.location.pathname.includes('/paper/')) return;
-        if (document.getElementById('zg-missing-students-card')) return;
+        if (document.getElementById('zg-novelties-card') || document.getElementById('zg-missing-students-card')) return;
 
         function detectQuizClassObjects() {
             const results = [];
@@ -5217,8 +5257,11 @@
         const anchor = gradedTable ? (gradedTable.closest('.dataTables_wrapper') || gradedTable) : document.querySelector('.table-responsive') || document.querySelector('table');
         if (!anchor) return;
 
+        // Limpiar cualquier tarjeta residual previa antes de insertar
+        document.querySelectorAll('#zg-novelties-card, #zg-missing-students-card').forEach(el => el.remove());
+
         const container = document.createElement('div');
-        container.id = 'zg-missing-students-card';
+        container.id = 'zg-novelties-card';
         container.style.cssText = `
             margin: 16px 0 24px 0;
             background: #ffffff;
@@ -5235,50 +5278,46 @@
         container.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <span id="zg-missing-title" style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
+                    <span id="zg-novelties-title" style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
                         <i class="fa fa-bell" style="color:#2563eb;"></i> Novedades <span id="zg-course-badge-name" style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(initialDisplayName)})</span>
                     </span>
-                    <span id="zg-missing-badge" style="font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
+                    <span id="zg-novelties-badge" style="font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
                         <i class="fa fa-spinner fa-spin"></i> Analizando...
                     </span>
                     <span id="zg-anomalies-badge" style="display:none; font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#ffe4e6; color:#9f1239;">
                     </span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <button id="zg-btn-check-missing" type="button" class="btn btn-primary btn-sm" style="font-size:12px; font-weight:600; border-radius:6px; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2);">
+                    <button id="zg-btn-refresh-novelties" type="button" class="btn btn-primary btn-sm" style="font-size:12px; font-weight:600; border-radius:6px; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2);">
                         <i class="fa fa-refresh"></i> Actualizar
                     </button>
                 </div>
             </div>
-            <div id="zg-missing-results" style="display:block; margin-top:14px; border-top:1px solid #f1f5f9; padding-top:14px;">
-                <div id="zg-missing-summary" style="font-size:13px; color:#64748b; margin-bottom:10px; font-weight:500;">
+            <div id="zg-novelties-results" style="display:block; margin-top:14px; border-top:1px solid #f1f5f9; padding-top:14px;">
+                <div id="zg-novelties-summary" style="font-size:13px; color:#64748b; margin-bottom:10px; font-weight:500;">
                     <i class="fa fa-spinner fa-spin"></i> Obteniendo lista de estudiantes...
                 </div>
-                <div id="zg-anomalies-section" style="display:none; margin-bottom:16px;"></div>
-                <div id="zg-missing-table-container" style="max-height:360px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; width:100%;"></div>
+                <div id="zg-novelties-table-container" style="max-height:360px; overflow-y:auto; border-radius:8px; width:100%;"></div>
             </div>
         `;
 
         container.style.display = 'none';
         anchor.parentNode.insertBefore(container, anchor);
 
-        const checkBtn = container.querySelector('#zg-btn-check-missing');
-        const resultsDiv = container.querySelector('#zg-missing-results');
-        const badgeEl = container.querySelector('#zg-missing-badge');
+        const refreshBtn = container.querySelector('#zg-btn-refresh-novelties');
+        const resultsDiv = container.querySelector('#zg-novelties-results');
+        const badgeEl = container.querySelector('#zg-novelties-badge');
         const anomaliesBadgeEl = container.querySelector('#zg-anomalies-badge');
-        const summaryEl = container.querySelector('#zg-missing-summary');
-        const anomaliesSection = container.querySelector('#zg-anomalies-section');
-        const tableContainer = container.querySelector('#zg-missing-table-container');
+        const summaryEl = container.querySelector('#zg-novelties-summary');
+        const tableContainer = container.querySelector('#zg-novelties-table-container');
         const courseBadgeName = container.querySelector('#zg-course-badge-name');
 
-        async function runMissingAnalysis(forceRefresh = false) {
-            checkBtn.disabled = true;
+        async function runNoveltiesAnalysis(forceRefresh = false) {
+            refreshBtn.disabled = true;
             badgeEl.innerText = 'Cargando...';
             badgeEl.style.background = '#e0e7ff';
             badgeEl.style.color = '#3730a3';
             anomaliesBadgeEl.style.display = 'none';
-            anomaliesSection.style.display = 'none';
-            anomaliesSection.innerHTML = '';
 
             try {
                 // Re-detectar clases
@@ -5344,7 +5383,6 @@
                     if (cells.length > 0) {
                         let studentId = cells[idColIdx] ? cells[idColIdx].innerText.trim().replace(/[^0-9]/g, '') : '';
                         
-                        // Respaldo por si la columna no coincidió exactamente
                         if (!studentId || studentId.length < 3) {
                             for (let c of cells) {
                                 const txt = c.innerText.trim();
@@ -5384,7 +5422,7 @@
 
                 const parsedScanned = scannedPapers.length;
 
-                // 2. Descargar Roster oficial de la(s) clase(s) asignadas y obtener total desde /classes/ (mismo cálculo que Status)
+                // 2. Descargar Roster oficial de la(s) clase(s) asignadas y obtener total desde /classes/
                 const classMap = await getClassStudentCountMap();
                 let roster = [];
                 if (detectedClasses.length > 0) {
@@ -5405,35 +5443,31 @@
                 const displayClassName = detectedClasses.length > 0 ? detectedClasses.map(c => c.name).join(', ') : (uniqueRoster[0] ? uniqueRoster[0].className : 'Curso');
                 if (courseBadgeName) courseBadgeName.innerText = `(${displayClassName})`;
 
-                // Total oficial calculado idéntico a la columna de Status de la lista de quizzes
                 const classExpectedTotal = getQuizClassStudentCount(displayClassName, classMap);
                 const totalCourse = uniqueRoster.length > 0 ? uniqueRoster.length : (classExpectedTotal > 0 ? classExpectedTotal : 0);
 
-                // 3. Identificar ESTUDIANTES FALTANTES (están en la lista oficial pero NO en los escaneados)
+                // 3. Identificar ESTUDIANTES FALTANTES (oficiales que no tienen hoja calificada)
                 const missingStudents = uniqueRoster.filter(st => {
                     const cleanId = st.id ? String(st.id).replace(/[^0-9]/g, '') : '';
                     const cleanIdNum = cleanId ? String(parseInt(cleanId, 10)) : '';
 
-                    // Si el estudiante del roster tiene ID, chequear coincidencia por ID
                     if (cleanId) {
                         if (scannedStudentIds.has(cleanId) || (cleanIdNum && scannedStudentIds.has(cleanIdNum))) {
-                            return false; // Presente por ID
+                            return false;
                         }
                     }
 
-                    // Si no coincidió por ID (o no tenía ID), chequear coincidencia exacta de nombre completo
                     if (st.name) {
                         const variants = getNormalizedVariants(st.name);
                         const nameMatch = variants.some(v => scannedStudentNames.has(v));
                         if (nameMatch) {
-                            return false; // Presente por coincidencia exacta de nombre
+                            return false;
                         }
                     }
 
-                    return true; // Falta
+                    return true;
                 });
 
-                // Ordenar faltantes por ID numérico ascendente
                 missingStudents.sort((a, b) => {
                     const idA = parseInt(String(a.id).replace(/[^0-9]/g, ''), 10);
                     const idB = parseInt(String(b.id).replace(/[^0-9]/g, ''), 10);
@@ -5441,7 +5475,7 @@
                     return (a.name || '').localeCompare(b.name || '');
                 });
 
-                // 4. Identificar NOVEDADES / ANOMALÍAS (Hojas escaneadas que NO pertenecen a este curso o que están DUPLICADAS)
+                // 4. Identificar ANOMALÍAS (hojas duplicadas o estudiantes de otros cursos)
                 const anomalies = [];
                 const rosterIdSet = new Set();
                 const rosterNameSet = new Set();
@@ -5489,7 +5523,7 @@
 
                     if (isAlien || isDuplicate) {
                         const reason = isDuplicate
-                            ? `Hoja escaneada duplicada (${occurrenceCount}ª vez)`
+                            ? `Doble vez (escaneado ${occurrenceCount} veces)`
                             : `No pertenece a la lista oficial de ${displayClassName}`;
                         
                         const actualClass = isDuplicate
@@ -5505,7 +5539,6 @@
                             isDuplicate: isDuplicate
                         });
 
-                        // Marcar fila en #gradedPapers con distintivo visual
                         if (sp.rowEl) {
                             sp.rowEl.style.backgroundColor = '#fff1f2';
                             const firstTd = sp.rowEl.querySelector('td:nth-child(2)') || sp.rowEl.querySelector('td');
@@ -5539,14 +5572,14 @@
 
                 console.log(`📊 [ZipGrade] Curso: "${displayClassName}" | Roster: ${totalCourse} | Escaneados: ${parsedScanned} | Faltantes: ${nMissing} | Novedades/Duplicados: ${anomalies.length}`);
 
-                // 5. UNIFICAR NOVEDADES (Faltantes y Sobrantes/Duplicados en una sola lista)
-                const allNovedades = [];
+                // 5. UNIFICAR LISTA DE NOVEDADES (Faltantes + Duplicados + Ajenos)
+                const noveltiesList = [];
                 
-                // Agregar sobrantes / duplicados (anomalías)
+                // Sobrantes / Duplicados
                 anomalies.forEach(an => {
                     const badgeText = an.isDuplicate ? 'SOBRA (Doble)' : 'SOBRA';
                     const iconClass = an.isDuplicate ? 'fa-files-o' : 'fa-exclamation-triangle';
-                    allNovedades.push({
+                    noveltiesList.push({
                         id: an.id,
                         name: an.name,
                         className: an.actualClass || displayClassName,
@@ -5557,28 +5590,27 @@
                     });
                 });
 
-                // Agregar faltantes
+                // Faltantes
                 missingStudents.forEach(st => {
-                    allNovedades.push({
+                    noveltiesList.push({
                         id: st.id || '-',
                         name: st.name || 'Estudiante sin nombre',
                         className: st.className || displayClassName,
                         type: 'FALTA',
                         badgeHtml: `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fca5a5; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;"><i class="fa fa-times-circle"></i> FALTA</span>`,
-                        reason: 'No tiene hoja escaneada (Sin calificar)',
+                        reason: 'No tiene hoja escaneada',
                         rowBg: '#ffffff'
                     });
                 });
 
-                // Ordenar novedades numéricamente por ID de menor a mayor
-                allNovedades.sort((a, b) => {
+                noveltiesList.sort((a, b) => {
                     const idA = parseInt(String(a.id).replace(/[^0-9]/g, ''), 10);
                     const idB = parseInt(String(b.id).replace(/[^0-9]/g, ''), 10);
                     if (!isNaN(idA) && !isNaN(idB)) return idA - idB;
                     return (a.name || '').localeCompare(b.name || '');
                 });
 
-                // 6. RENDERIZAR RESULTADOS UNIFICADOS
+                // 6. RENDERIZAR RESULTADOS
                 if (totalCourse === 0 && parsedScanned === 0) {
                     container.style.display = 'none';
                     return;
@@ -5587,7 +5619,6 @@
                 container.style.display = 'block';
                 resultsDiv.style.display = 'block';
 
-                // Badges superiores
                 if (totalCourse > 0) {
                     if (isCompleted) {
                         badgeEl.innerText = `¡Completado! (${scannedOfficialCount}/${totalCourse})`;
@@ -5612,8 +5643,7 @@
                     anomaliesBadgeEl.style.display = 'none';
                 }
 
-                // Resumen principal
-                if (allNovedades.length === 0 && isCompleted) {
+                if (noveltiesList.length === 0 && isCompleted) {
                     summaryEl.innerHTML = `
                         <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; color:#166534; font-size:13px; font-weight:500; display:flex; align-items:center; gap:10px;">
                             <i class="fa fa-check-circle" style="font-size:18px; color:#16a34a; flex-shrink:0;"></i>
@@ -5622,11 +5652,10 @@
                     `;
                     tableContainer.style.display = 'none';
                     tableContainer.innerHTML = '';
-                    anomaliesSection.style.display = 'none';
                 } else {
-                    const copyBtnHtml = allNovedades.length > 0 ? `
-                        <button id="zg-copy-novedades-btn" type="button" class="btn btn-default btn-xs" style="border-radius:6px; font-weight:600; color:#991b1b; border-color:#fca5a5; background:#fff5f5;">
-                            <i class="fa fa-clipboard"></i> Copiar novedades (${allNovedades.length})
+                    const copyBtnHtml = noveltiesList.length > 0 ? `
+                        <button id="zg-copy-novelties-btn" type="button" class="btn btn-default btn-xs" style="border-radius:6px; font-weight:600; color:#991b1b; border-color:#fca5a5; background:#fff5f5;">
+                            <i class="fa fa-clipboard"></i> Copiar novedades (${noveltiesList.length})
                         </button>
                     ` : '';
 
@@ -5653,7 +5682,7 @@
                     `;
 
                     // Renderizar TABLA ÚNICA DE NOVEDADES
-                    if (allNovedades.length > 0) {
+                    if (noveltiesList.length > 0) {
                         tableContainer.style.display = 'block';
                         let tableHtml = `
                             <div style="border:1px solid #fecdd3; border-radius:8px; overflow-x:auto; background:#ffffff;">
@@ -5665,13 +5694,13 @@
                                             <th style="text-align:left; color:#991b1b; font-weight:700; padding:8px 10px;">Nombre del Estudiante</th>
                                             <th style="text-align:center; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 10px;">Curso</th>
                                             <th style="text-align:center; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 10px;">Estado</th>
-                                            <th style="text-align:left; color:#991b1b; font-weight:700; padding:8px 10px;">Novedad / Detalle</th>
+                                            <th style="text-align:left; color:#991b1b; font-weight:700; padding:8px 10px;">Novedad</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                         `;
 
-                        allNovedades.forEach((item, idx) => {
+                        noveltiesList.forEach((item, idx) => {
                             tableHtml += `
                                 <tr style="background:${item.rowBg};">
                                     <td style="text-align:center; color:#881337; font-weight:600; white-space:nowrap; padding:8px 6px; vertical-align:middle;">${idx + 1}</td>
@@ -5687,18 +5716,18 @@
                         tableHtml += `</tbody></table></div>`;
                         tableContainer.innerHTML = tableHtml;
 
-                        const copyBtn = container.querySelector('#zg-copy-novedades-btn');
+                        const copyBtn = container.querySelector('#zg-copy-novelties-btn');
                         if (copyBtn) {
                             copyBtn.addEventListener('click', () => {
                                 const lines = [
-                                    `📋 NOVEDADES DEL QUIZ - Curso: ${displayClassName} (${allNovedades.length} novedades)`,
+                                    `📋 NOVEDADES DEL QUIZ - Curso: ${displayClassName} (${noveltiesList.length} novedades)`,
                                     `   Resumen: ${missingStudents.length} faltante(s) | ${anomalies.length} sobrante(s)`,
                                     `--------------------------------------------------`,
-                                    ...allNovedades.map((item, i) => `${i + 1}. [ID: ${item.id}] ${item.name} (${item.className}) - ESTADO: ${item.type} - DETALLE: ${item.reason}`)
+                                    ...noveltiesList.map((item, i) => `${i + 1}. [ID: ${item.id}] ${item.name} (${item.className}) - ESTADO: ${item.type} - NOVEDAD: ${item.reason}`)
                                 ];
                                 const textToCopy = lines.join('\n');
                                 navigator.clipboard.writeText(textToCopy).then(() => {
-                                    showZgToast(`Se copiaron ${allNovedades.length} novedades al portapapeles.`, 'success');
+                                    showZgToast(`Se copiaron ${noveltiesList.length} novedades al portapapeles.`, 'success');
                                 }).catch(() => {
                                     alert(textToCopy);
                                 });
@@ -5718,14 +5747,14 @@
                 badgeEl.style.color = '#991b1b';
                 summaryEl.innerHTML = `<span style="color:#ef4444;"><i class="fa fa-times-circle"></i> Ocurrió un error al procesar la lista: ${escapeHtml(err.message)}</span>`;
             } finally {
-                checkBtn.disabled = false;
+                refreshBtn.disabled = false;
             }
         }
 
-        checkBtn.addEventListener('click', () => runMissingAnalysis(true));
+        refreshBtn.addEventListener('click', () => runNoveltiesAnalysis(true));
 
-        // Auto-ejecución inmediata sin necesidad de que el usuario tenga que dar clic en "Verificar"
-        runMissingAnalysis(false);
+        // Auto-ejecución inmediata al cargar el detalle del quiz
+        runNoveltiesAnalysis(false);
     }
 
     // ==========================================
