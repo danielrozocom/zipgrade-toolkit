@@ -5441,12 +5441,12 @@
                     return (a.name || '').localeCompare(b.name || '');
                 });
 
-                // 4. Identificar NOVEDADES / ANOMALÍAS (Hojas escaneadas que NO pertenecen a este curso)
+                // 4. Identificar NOVEDADES / ANOMALÍAS (Hojas escaneadas que NO pertenecen a este curso o que están DUPLICADAS)
                 const anomalies = [];
-                if (uniqueRoster.length > 0) {
-                    const rosterIdSet = new Set();
-                    const rosterNameSet = new Set();
+                const rosterIdSet = new Set();
+                const rosterNameSet = new Set();
 
+                if (uniqueRoster.length > 0) {
                     uniqueRoster.forEach(st => {
                         const cleanId = st.id ? String(st.id).replace(/[^0-9]/g, '') : '';
                         if (cleanId) {
@@ -5458,43 +5458,69 @@
                             getNormalizedVariants(st.name).forEach(v => rosterNameSet.add(v));
                         }
                     });
+                }
 
-                    scannedPapers.forEach(sp => {
-                        const cleanId = sp.id ? String(sp.id).replace(/[^0-9]/g, '') : '';
-                        const cleanIdNum = cleanId ? String(parseInt(cleanId, 10)) : '';
+                // Limpiar estilos y tags de anomalía previos en #gradedPapers
+                document.querySelectorAll('#gradedPapers tr .zg-anomaly-tag').forEach(tag => tag.remove());
+                document.querySelectorAll('#gradedPapers tbody tr').forEach(tr => {
+                    tr.style.backgroundColor = '';
+                });
 
-                        const inRosterById = cleanId && (rosterIdSet.has(cleanId) || (cleanIdNum && rosterIdSet.has(cleanIdNum)));
+                const seenScannedOccurrences = new Map();
+
+                scannedPapers.forEach(sp => {
+                    const cleanId = sp.id ? String(sp.id).replace(/[^0-9]/g, '') : '';
+                    const cleanIdNum = cleanId ? String(parseInt(cleanId, 10)) : '';
+
+                    const inRosterById = cleanId && (rosterIdSet.has(cleanId) || (cleanIdNum && rosterIdSet.has(cleanIdNum)));
+                    
+                    let inRosterByName = false;
+                    if (sp.name) {
+                        const variants = getNormalizedVariants(sp.name);
+                        inRosterByName = variants.some(v => rosterNameSet.has(v));
+                    }
+
+                    const key = cleanId ? 'ID_' + cleanId : 'NAME_' + cleanNormalizeName(sp.name);
+                    const occurrenceCount = (seenScannedOccurrences.get(key) || 0) + 1;
+                    seenScannedOccurrences.set(key, occurrenceCount);
+
+                    const isAlien = uniqueRoster.length > 0 && !inRosterById && !inRosterByName;
+                    const isDuplicate = occurrenceCount > 1;
+
+                    if (isAlien || isDuplicate) {
+                        const reason = isDuplicate
+                            ? `Hoja escaneada duplicada (${occurrenceCount}ª vez)`
+                            : `No pertenece a la lista oficial de ${displayClassName}`;
                         
-                        let inRosterByName = false;
-                        if (sp.name) {
-                            const variants = getNormalizedVariants(sp.name);
-                            inRosterByName = variants.some(v => rosterNameSet.has(v));
-                        }
+                        const actualClass = isDuplicate
+                            ? displayClassName
+                            : 'Ajeno';
 
-                        if (!inRosterById && !inRosterByName) {
-                            anomalies.push({
-                                id: sp.id || '-',
-                                name: sp.name || 'Estudiante sin nombre',
-                                actualClass: 'No pertenece a ' + displayClassName,
-                                reason: `No está en la lista oficial de ${displayClassName}`,
-                                rowEl: sp.rowEl
-                            });
+                        anomalies.push({
+                            id: sp.id || '-',
+                            name: sp.name || 'Estudiante sin nombre',
+                            actualClass: actualClass,
+                            reason: reason,
+                            rowEl: sp.rowEl,
+                            isDuplicate: isDuplicate
+                        });
 
-                            // Marcar fila en #gradedPapers con un distintivo visual suave
-                            if (sp.rowEl) {
-                                sp.rowEl.style.backgroundColor = '#fffbeb';
-                                const firstTd = sp.rowEl.querySelector('td:nth-child(2)') || sp.rowEl.querySelector('td');
-                                if (firstTd && !firstTd.querySelector('.zg-anomaly-tag')) {
-                                    const tag = document.createElement('span');
-                                    tag.className = 'zg-anomaly-tag';
-                                    tag.style.cssText = 'display:inline-block; font-size:10px; font-weight:700; color:#b45309; background:#fef3c7; border:1px solid #fde68a; border-radius:4px; padding:1px 5px; margin-left:6px;';
-                                    tag.innerHTML = `<i class="fa fa-exclamation-triangle"></i> Novedad`;
-                                    firstTd.appendChild(tag);
-                                }
+                        // Marcar fila en #gradedPapers con distintivo visual
+                        if (sp.rowEl) {
+                            sp.rowEl.style.backgroundColor = '#fff1f2';
+                            const firstTd = sp.rowEl.querySelector('td:nth-child(2)') || sp.rowEl.querySelector('td');
+                            if (firstTd && !firstTd.querySelector('.zg-anomaly-tag')) {
+                                const tag = document.createElement('span');
+                                tag.className = 'zg-anomaly-tag';
+                                tag.style.cssText = 'display:inline-block; font-size:10px; font-weight:700; color:#9f1239; background:#ffe4e6; border:1px solid #fecdd3; border-radius:4px; padding:1px 5px; margin-left:6px;';
+                                tag.innerHTML = isDuplicate
+                                    ? `<i class="fa fa-files-o"></i> Duplicado`
+                                    : `<i class="fa fa-exclamation-triangle"></i> Novedad`;
+                                firstTd.appendChild(tag);
                             }
                         }
-                    });
-                }
+                    }
+                });
 
                 let nMissing = 0;
                 let scannedOfficialCount = parsedScanned;
@@ -5507,48 +5533,25 @@
                     nMissing = Math.max(0, totalCourse - parsedScanned);
                 }
 
-                const isCompleted = totalCourse > 0 ? (nMissing === 0 && (uniqueRoster.length > 0 || parsedScanned >= totalCourse)) : (parsedScanned > 0);
+                const isCompleted = totalCourse > 0 
+                    ? (nMissing === 0 && anomalies.length === 0 && (uniqueRoster.length > 0 || parsedScanned >= totalCourse)) 
+                    : (parsedScanned > 0 && anomalies.length === 0);
 
-                console.log(`📊 [ZipGrade] Curso: "${displayClassName}" | Roster: ${totalCourse} | Escaneados: ${parsedScanned} | Faltantes: ${nMissing} | Novedades: ${anomalies.length}`);
+                console.log(`📊 [ZipGrade] Curso: "${displayClassName}" | Roster: ${totalCourse} | Escaneados: ${parsedScanned} | Faltantes: ${nMissing} | Novedades/Duplicados: ${anomalies.length}`);
 
-                // 5. RENDERIZAR RESULTADOS
-                if (totalCourse === 0 && parsedScanned === 0) {
-                    container.style.display = 'none';
-                    return;
-                }
-
-                container.style.display = 'block';
-                resultsDiv.style.display = 'block';
-
-                // Badges superiores
-                if (totalCourse > 0) {
-                    if (isCompleted) {
-                        badgeEl.innerText = `¡Completado! (${scannedOfficialCount}/${totalCourse})`;
-                        badgeEl.style.background = '#dcfce7';
-                        badgeEl.style.color = '#166534';
-                    } else {
-                        const faltanTxt = nMissing === 1 ? 'Falta 1 de' : `Faltan ${nMissing} de`;
-                        badgeEl.innerText = `${faltanTxt} ${totalCourse}`;
-                        badgeEl.style.background = '#fef3c7';
-                        badgeEl.style.color = '#92400e';
-                    }
-                } else {
-                    badgeEl.innerText = `¡Completado! (${parsedScanned}/${parsedScanned})`;
-                    badgeEl.style.background = '#dcfce7';
-                    badgeEl.style.color = '#166534';
-                }
-
-                // 5. UNIFICAR NOVEDADES (Faltantes y Sobrantes en una sola lista)
+                // 5. UNIFICAR NOVEDADES (Faltantes y Sobrantes/Duplicados en una sola lista)
                 const allNovedades = [];
                 
-                // Agregar sobrantes (anomalías)
+                // Agregar sobrantes / duplicados (anomalías)
                 anomalies.forEach(an => {
+                    const badgeText = an.isDuplicate ? 'SOBRA (Doble)' : 'SOBRA';
+                    const iconClass = an.isDuplicate ? 'fa-files-o' : 'fa-exclamation-triangle';
                     allNovedades.push({
                         id: an.id,
                         name: an.name,
                         className: an.actualClass || displayClassName,
-                        type: 'SOBRA',
-                        badgeHtml: `<span style="background:#ffe4e6; color:#9f1239; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fecdd3; display:inline-flex; align-items:center; gap:4px;"><i class="fa fa-exclamation-triangle"></i> SOBRA</span>`,
+                        type: badgeText,
+                        badgeHtml: `<span style="background:#ffe4e6; color:#9f1239; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fecdd3; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;"><i class="fa ${iconClass}"></i> ${badgeText}</span>`,
                         reason: an.reason || `No pertenece a la lista oficial de ${displayClassName}`,
                         rowBg: '#fff1f2'
                     });
@@ -5561,7 +5564,7 @@
                         name: st.name || 'Estudiante sin nombre',
                         className: st.className || displayClassName,
                         type: 'FALTA',
-                        badgeHtml: `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fca5a5; display:inline-flex; align-items:center; gap:4px;"><i class="fa fa-times-circle"></i> FALTA</span>`,
+                        badgeHtml: `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:6px; font-weight:700; font-size:11px; border:1px solid #fca5a5; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;"><i class="fa fa-times-circle"></i> FALTA</span>`,
                         reason: 'No tiene hoja escaneada (Sin calificar)',
                         rowBg: '#ffffff'
                     });
@@ -5586,7 +5589,7 @@
 
                 // Badges superiores
                 if (totalCourse > 0) {
-                    if (isCompleted && anomalies.length === 0) {
+                    if (isCompleted) {
                         badgeEl.innerText = `¡Completado! (${scannedOfficialCount}/${totalCourse})`;
                         badgeEl.style.background = '#dcfce7';
                         badgeEl.style.color = '#166534';
@@ -5597,14 +5600,14 @@
                         badgeEl.style.color = '#991b1b';
                     }
                 } else {
-                    badgeEl.innerText = `¡Completado! (${parsedScanned}/${parsedScanned})`;
-                    badgeEl.style.background = '#dcfce7';
-                    badgeEl.style.color = '#166534';
+                    badgeEl.innerText = isCompleted ? `¡Completado! (${parsedScanned}/${parsedScanned})` : `Novedades (${parsedScanned})`;
+                    badgeEl.style.background = isCompleted ? '#dcfce7' : '#fee2e2';
+                    badgeEl.style.color = isCompleted ? '#166534' : '#991b1b';
                 }
 
                 if (anomalies.length > 0) {
                     anomaliesBadgeEl.style.display = 'inline-block';
-                    anomaliesBadgeEl.innerHTML = `<i class="fa fa-exclamation-triangle"></i> ${anomalies.length} ${anomalies.length === 1 ? 'Sobrante' : 'Sobrantes'}`;
+                    anomaliesBadgeEl.innerHTML = `<i class="fa fa-exclamation-triangle"></i> ${anomalies.length} ${anomalies.length === 1 ? 'Sobrante / Doble' : 'Sobrantes / Dobles'}`;
                 } else {
                     anomaliesBadgeEl.style.display = 'none';
                 }
@@ -5612,8 +5615,9 @@
                 // Resumen principal
                 if (allNovedades.length === 0 && isCompleted) {
                     summaryEl.innerHTML = `
-                        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; color:#166534; font-weight:600; display:flex; align-items:center; gap:8px;">
-                            <i class="fa fa-check-circle" style="font-size:16px;"></i> ¡Excelente! Todos los <strong>${totalCourse}</strong> estudiantes del curso <strong>${escapeHtml(displayClassName)}</strong> tienen su hoja calificada (sin novedades ni faltantes).
+                        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; color:#166534; font-size:13px; font-weight:500; display:flex; align-items:center; gap:10px;">
+                            <i class="fa fa-check-circle" style="font-size:18px; color:#16a34a; flex-shrink:0;"></i>
+                            <span style="line-height:1.4;">¡Excelente! Todos los <strong style="color:#14532d;">${totalCourse}</strong> estudiantes del curso <strong style="color:#14532d;">${escapeHtml(displayClassName)}</strong> tienen su hoja calificada (sin novedades ni duplicados).</span>
                         </div>
                     `;
                     tableContainer.style.display = 'none';
@@ -5631,7 +5635,12 @@
                         descParts.push(`faltan <strong style="color:#b91c1c; font-size:13px;">${nMissing}</strong> estudiantes de ${totalCourse} (${scannedOfficialCount} calificados)`);
                     }
                     if (anomalies.length > 0) {
-                        descParts.push(`se detectaron <strong style="color:#9f1239; font-size:13px;">${anomalies.length}</strong> hojas sobrantes / ajenas`);
+                        const dupCount = anomalies.filter(a => a.isDuplicate).length;
+                        const alienCount = anomalies.length - dupCount;
+                        const notes = [];
+                        if (dupCount > 0) notes.push(`<strong style="color:#9f1239; font-size:13px;">${dupCount}</strong> ${dupCount === 1 ? 'hoja duplicada/doble' : 'hojas duplicadas/dobles'}`);
+                        if (alienCount > 0) notes.push(`<strong style="color:#9f1239; font-size:13px;">${alienCount}</strong> ${alienCount === 1 ? 'hoja ajena' : 'hojas ajenas'}`);
+                        descParts.push(`se detectaron ${notes.join(' y ')}`);
                     }
 
                     summaryEl.innerHTML = `
@@ -5647,16 +5656,16 @@
                     if (allNovedades.length > 0) {
                         tableContainer.style.display = 'block';
                         let tableHtml = `
-                            <div style="border:1px solid #fecdd3; border-radius:8px; overflow:hidden; background:#ffffff;">
-                                <table class="table table-striped table-hover" style="margin:0; width:100%; table-layout:fixed; font-size:12px;">
+                            <div style="border:1px solid #fecdd3; border-radius:8px; overflow-x:auto; background:#ffffff;">
+                                <table class="table table-striped table-hover" style="margin:0; width:100%; font-size:12px; border-collapse:collapse;">
                                     <thead style="background:#fff1f2; position:sticky; top:0; z-index:1; border-bottom:1px solid #fecdd3;">
                                         <tr>
-                                            <th style="width:40px; text-align:center; color:#991b1b; font-weight:700;">#</th>
-                                            <th style="width:110px; color:#991b1b; font-weight:700;">ID Estudiante</th>
-                                            <th style="color:#991b1b; font-weight:700;">Nombre del Estudiante</th>
-                                            <th style="width:90px; text-align:center; color:#991b1b; font-weight:700;">Curso</th>
-                                            <th style="width:100px; text-align:center; color:#991b1b; font-weight:700;">Estado</th>
-                                            <th style="width:230px; color:#991b1b; font-weight:700;">Novedad / Detalle</th>
+                                            <th style="width:36px; text-align:center; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 6px;">#</th>
+                                            <th style="text-align:left; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 10px;">ID Estudiante</th>
+                                            <th style="text-align:left; color:#991b1b; font-weight:700; padding:8px 10px;">Nombre del Estudiante</th>
+                                            <th style="text-align:center; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 10px;">Curso</th>
+                                            <th style="text-align:center; color:#991b1b; font-weight:700; white-space:nowrap; padding:8px 10px;">Estado</th>
+                                            <th style="text-align:left; color:#991b1b; font-weight:700; padding:8px 10px;">Novedad / Detalle</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -5665,12 +5674,12 @@
                         allNovedades.forEach((item, idx) => {
                             tableHtml += `
                                 <tr style="background:${item.rowBg};">
-                                    <td style="text-align:center; color:#881337; font-weight:600;">${idx + 1}</td>
-                                    <td style="font-weight:700; color:#881337;">${escapeHtml(item.id)}</td>
-                                    <td style="color:#0f172a; font-weight:600;">${escapeHtml(item.name)}</td>
-                                    <td style="color:#475569; text-align:center; font-weight:600;">${escapeHtml(item.className)}</td>
-                                    <td style="text-align:center;">${item.badgeHtml}</td>
-                                    <td style="color:#7f1d1d; font-weight:500;">${escapeHtml(item.reason)}</td>
+                                    <td style="text-align:center; color:#881337; font-weight:600; white-space:nowrap; padding:8px 6px; vertical-align:middle;">${idx + 1}</td>
+                                    <td style="font-weight:700; color:#881337; white-space:nowrap; padding:8px 10px; vertical-align:middle;">${escapeHtml(item.id)}</td>
+                                    <td style="color:#0f172a; font-weight:600; padding:8px 10px; vertical-align:middle;">${escapeHtml(item.name)}</td>
+                                    <td style="color:#475569; text-align:center; font-weight:600; white-space:nowrap; padding:8px 10px; vertical-align:middle;">${escapeHtml(item.className)}</td>
+                                    <td style="text-align:center; white-space:nowrap; padding:8px 10px; vertical-align:middle;">${item.badgeHtml}</td>
+                                    <td style="color:#7f1d1d; font-weight:500; padding:8px 10px; vertical-align:middle;">${escapeHtml(item.reason)}</td>
                                 </tr>
                             `;
                         });
