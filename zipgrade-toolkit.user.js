@@ -1776,7 +1776,7 @@
         if (total > 0) {
             if (scanned === total) {
                 color = '#10b981'; // verde completo
-                tooltipText = `¡Completado! (0 faltan • ${scanned}/${total})`;
+                tooltipText = `¡Completado! (${scanned}/${total})`;
             } else if (scanned > total) {
                 color = '#8b5cf6'; // púrpura para anomalía (> 100%)
                 const extra = scanned - total;
