@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      29.9
+// @version      30.0
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -445,6 +445,29 @@
                 padding: 3px 8px !important;
                 box-shadow: 0 1px 3px rgba(124,58,237,0.35) !important;
             }
+            /* Selector de fechas interactivo: cubre 100% del campo para que cualquier clic abra el calendario */
+            #zg-edit-date,
+            #quizDate,
+            #zg-quiz-date-wrapper input[type="date"],
+            #zg-edit-date-wrap input[type="date"] {
+                cursor: pointer !important;
+            }
+            #zg-edit-date::-webkit-calendar-picker-indicator,
+            #quizDate::-webkit-calendar-picker-indicator,
+            #zg-quiz-date-wrapper input[type="date"]::-webkit-calendar-picker-indicator,
+            #zg-edit-date-wrap input[type="date"]::-webkit-calendar-picker-indicator {
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                opacity: 0 !important;
+                cursor: pointer !important;
+            }
          `;
         document.head.appendChild(style);
         // Cada vez que el sitio agregue CSS después de este estilo, recolocarlo al final
@@ -473,7 +496,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '28.8';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '30.0';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1069,6 +1092,57 @@
         const monthName = months[month - 1];
 
         return `${dayName} ${day}/${monthName}/${year}`;
+    }
+
+    // Helper universal para hacer que cualquier selector de fecha nativo se abra al hacer clic
+    function setupDatePickerInteraction(inputEl, wrapperEl, labelEl) {
+        if (!inputEl) return;
+
+        inputEl.style.cursor = 'pointer';
+
+        const triggerPicker = () => {
+            if (typeof inputEl.showPicker === 'function') {
+                try {
+                    inputEl.showPicker();
+                    return;
+                } catch (err) {
+                    // Si el navegador ya lo está mostrando o restringe la llamada, continuar al focus
+                }
+            }
+            inputEl.focus();
+        };
+
+        // Al hacer clic directamente en el input
+        inputEl.addEventListener('click', () => {
+            triggerPicker();
+        });
+
+        // Al presionar Enter, Espacio o Flecha Abajo cuando tiene el foco
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                triggerPicker();
+            }
+        });
+
+        // Si se hace clic en el wrapper contenedor
+        if (wrapperEl) {
+            wrapperEl.style.cursor = 'pointer';
+            wrapperEl.addEventListener('click', (e) => {
+                if (e.target !== inputEl) {
+                    triggerPicker();
+                }
+            });
+        }
+
+        // Si se hace clic en el label de la fecha
+        if (labelEl) {
+            labelEl.style.cursor = 'pointer';
+            labelEl.addEventListener('click', (e) => {
+                e.preventDefault();
+                triggerPicker();
+            });
+        }
     }
 
     // Peso de ordenación de la celda "Class" de un quiz.
@@ -3530,8 +3604,8 @@
                     </div>
                 </div>
                 <div>
-                    <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Fecha</label>
-                    <div id="zg-edit-date-wrap" style="position:relative; width:100%; height:34px;">
+                    <label for="zg-edit-date" style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0; cursor:pointer;">Fecha</label>
+                    <div id="zg-edit-date-wrap" style="position:relative; width:100%; height:34px; cursor:pointer;">
                         <div style="display:flex; align-items:center; justify-content:space-between; background:#fff; pointer-events:none; position:absolute; top:0; left:0; width:100%; height:100%; z-index:1; box-sizing:border-box; border:1px solid #d1d5db; border-radius:6px; padding:0 12px; color:#334155; font-size:13px;">
                             <span id="zg-edit-date-text" style="color:#334155;">Sin fecha</span>
                             <i class="fa fa-calendar" style="color:#94a3b8; font-size:14px;"></i>
@@ -3592,6 +3666,10 @@
         updateDateDisplay();
         dateInput.addEventListener('input', updateDateDisplay);
         dateInput.addEventListener('change', updateDateDisplay);
+
+        const dateWrap = modal.querySelector('#zg-edit-date-wrap');
+        const dateLabel = modal.querySelector('label[for="zg-edit-date"]');
+        setupDatePickerInteraction(dateInput, dateWrap, dateLabel);
 
         // Estado y feedback visual del checkbox Auto-siguiente (accesible desde todo el modal)
         let autoNextChk = null;
@@ -4341,7 +4419,7 @@
         // 1. Crear contenedor
         const wrapper = document.createElement('div');
         wrapper.id = 'zg-quiz-date-wrapper';
-        wrapper.style.cssText = 'position: relative; width: 100%; height: 34px;';
+        wrapper.style.cssText = 'position: relative; width: 100%; height: 34px; cursor: pointer;';
 
         // 2. Crear elemento de visualización
         const displayEl = document.createElement('div');
@@ -4406,6 +4484,10 @@
 
         // Actualizar el valor inicial
         updateDisplay();
+
+        // Conectar interacción para abrir el selector al hacer clic
+        const editPageLabel = document.querySelector('label[for="quizDate"]');
+        setupDatePickerInteraction(quizDateInput, wrapper, editPageLabel);
     }
 
     // Helper para formatear nombres de quiz antiguos al nuevo formato "Template E.S.A. | Class | Period | Session"
