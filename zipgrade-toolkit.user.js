@@ -1177,6 +1177,47 @@
         return 0;
     }
 
+    // Nombre del quiz de la fila (columna 3: "Nombre").
+    function getQuizNameText(row) {
+        const link = row.querySelector('td a[href*="/quiz/"][href*="/all/"]');
+        if (link) return link.innerText.trim();
+        const cell = row.cells[3];
+        return cell ? cell.innerText.trim() : '';
+    }
+
+    // Número de sesión (S1, S2, ...) extraído del nombre del quiz.
+    // Devuelve 9999 cuando el nombre no trae sesión, para dejarlo al final.
+    function getQuizSessionNumberFromText(text) {
+        if (!text) return 9999;
+        const matches = text.match(/\bS(\d{1,3})\b/gi);
+        if (!matches || matches.length === 0) return 9999;
+        const last = matches[matches.length - 1];
+        const num = parseInt(last.replace(/[^\d]/g, ''), 10);
+        return isNaN(num) ? 9999 : num;
+    }
+
+    function getQuizSessionNumber(row) {
+        return getQuizSessionNumberFromText(getQuizNameText(row));
+    }
+
+    // Comparador único de filas de quizzes. Además de fecha/curso, desempata por
+    // sesión (S1 antes que S2) y, si aún empatan, por nombre.
+    function compareQuizRows(a, b, mode) {
+        let cmp = 0;
+        if (mode === 'class-date') {
+            cmp = getQuizClassWeight(a) - getQuizClassWeight(b);
+            if (cmp === 0) cmp = getQuizDateValue(a) - getQuizDateValue(b);
+        } else {
+            cmp = getQuizDateValue(a) - getQuizDateValue(b);
+            if (cmp === 0) cmp = getQuizClassWeight(a) - getQuizClassWeight(b);
+        }
+        if (cmp === 0) cmp = getQuizSessionNumber(a) - getQuizSessionNumber(b);
+        if (cmp === 0) {
+            cmp = getQuizNameText(a).localeCompare(getQuizNameText(b), undefined, { numeric: true, sensitivity: 'base' });
+        }
+        return cmp;
+    }
+
     // Traduce las cabeceras de la tabla de quizzes a español (idempotente).
     // Solo cambia los nodos de texto para conservar la tipografía y estructura
     // original del <th> (spans, clases de ordenación de DataTables, etc.).
@@ -1493,24 +1534,24 @@
                 if (settings && settings.aoColumns) {
                     if (mode === 'class-date') {
                         if (settings.aoColumns[2]) {
-                            settings.aoColumns[2].aDataSort = [2, 4];
-                            settings.aoColumns[2].orderData = [2, 4];
+                            settings.aoColumns[2].aDataSort = [2, 4, 3];
+                            settings.aoColumns[2].orderData = [2, 4, 3];
                         }
                         if (settings.aoColumns[4]) {
-                            settings.aoColumns[4].aDataSort = [4, 2];
-                            settings.aoColumns[4].orderData = [4, 2];
+                            settings.aoColumns[4].aDataSort = [4, 2, 3];
+                            settings.aoColumns[4].orderData = [4, 2, 3];
                         }
-                        dt.order([[2, 'asc'], [4, 'asc']]);
+                        dt.order([[2, 'asc'], [4, 'asc'], [3, 'asc']]);
                     } else {
                         if (settings.aoColumns[2]) {
-                            settings.aoColumns[2].aDataSort = [2, 4];
-                            settings.aoColumns[2].orderData = [2, 4];
+                            settings.aoColumns[2].aDataSort = [2, 4, 3];
+                            settings.aoColumns[2].orderData = [2, 4, 3];
                         }
                         if (settings.aoColumns[4]) {
-                            settings.aoColumns[4].aDataSort = [4, 2];
-                            settings.aoColumns[4].orderData = [4, 2];
+                            settings.aoColumns[4].aDataSort = [4, 2, 3];
+                            settings.aoColumns[4].orderData = [4, 2, 3];
                         }
-                        dt.order([[4, 'asc'], [2, 'asc']]);
+                        dt.order([[4, 'asc'], [2, 'asc'], [3, 'asc']]);
                     }
                 }
 
@@ -1528,25 +1569,7 @@
         let rows = Array.from(tbody.querySelectorAll('tr'));
         if (rows.length === 0) return;
 
-        rows.sort((a, b) => {
-            if (mode === 'class-date') {
-                const classA = getQuizClassWeight(a);
-                const classB = getQuizClassWeight(b);
-                if (classA !== classB) return classA - classB;
-
-                const dateA = getQuizDateValue(a);
-                const dateB = getQuizDateValue(b);
-                return dateA - dateB;
-            } else {
-                const dateA = getQuizDateValue(a);
-                const dateB = getQuizDateValue(b);
-                if (dateA !== dateB) return dateA - dateB;
-
-                const classA = getQuizClassWeight(a);
-                const classB = getQuizClassWeight(b);
-                return classA - classB;
-            }
-        });
+        rows.sort((a, b) => compareQuizRows(a, b, mode));
 
         const fragment = document.createDocumentFragment();
         rows.forEach(row => fragment.appendChild(row));
@@ -1586,6 +1609,15 @@
                 dateCell.setAttribute('data-order', dateVal);
                 dateCell.setAttribute('data-sort', dateVal);
             }
+
+            // El nombre lleva la sesión (S1, S2, ...). Se antepone al nombre para que
+            // DataTables la use como desempate cuando fecha y curso son iguales.
+            const nameCell = row.cells[3];
+            if (nameCell) {
+                const sessionPad = String(getQuizSessionNumber(row)).padStart(4, '0');
+                nameCell.setAttribute('data-order', `${sessionPad}|${getQuizNameText(row)}`);
+                nameCell.setAttribute('data-sort', `${sessionPad}|${getQuizNameText(row)}`);
+            }
         });
 
         const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
@@ -1596,12 +1628,12 @@
                 const settings = dt.settings()[0];
                 if (settings && settings.aoColumns) {
                     if (settings.aoColumns[4]) {
-                        settings.aoColumns[4].aDataSort = [4, 2];
-                        settings.aoColumns[4].orderData = [4, 2];
+                        settings.aoColumns[4].aDataSort = [4, 2, 3];
+                        settings.aoColumns[4].orderData = [4, 2, 3];
                     }
                     if (settings.aoColumns[2]) {
-                        settings.aoColumns[2].aDataSort = [2, 4];
-                        settings.aoColumns[2].orderData = [2, 4];
+                        settings.aoColumns[2].aDataSort = [2, 4, 3];
+                        settings.aoColumns[2].orderData = [2, 4, 3];
                     }
                 }
 
@@ -1609,9 +1641,9 @@
 
                 if (!hasSortedQuizzesInitially) {
                     if (mode === 'class-date') {
-                        dt.order([[2, 'asc'], [4, 'asc']]);
+                        dt.order([[2, 'asc'], [4, 'asc'], [3, 'asc']]);
                     } else {
-                        dt.order([[4, 'asc'], [2, 'asc']]);
+                        dt.order([[4, 'asc'], [2, 'asc'], [3, 'asc']]);
                     }
                     hasSortedQuizzesInitially = true;
                 }
@@ -1623,25 +1655,7 @@
             }
         }
 
-        rows.sort((a, b) => {
-            if (mode === 'class-date') {
-                const classA = getQuizClassWeight(a);
-                const classB = getQuizClassWeight(b);
-                if (classA !== classB) return classA - classB;
-
-                const dateA = getQuizDateValue(a);
-                const dateB = getQuizDateValue(b);
-                return dateA - dateB;
-            } else {
-                const dateA = getQuizDateValue(a);
-                const dateB = getQuizDateValue(b);
-                if (dateA !== dateB) return dateA - dateB;
-
-                const classA = getQuizClassWeight(a);
-                const classB = getQuizClassWeight(b);
-                return classA - classB;
-            }
-        });
+        rows.sort((a, b) => compareQuizRows(a, b, mode));
 
         const fragment = document.createDocumentFragment();
         rows.forEach(row => fragment.appendChild(row));
