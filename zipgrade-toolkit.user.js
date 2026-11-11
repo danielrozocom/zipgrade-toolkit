@@ -6971,10 +6971,29 @@
             else if (/^Updated Responses?$/i.test(txt)) th.textContent = 'Respuestas Actualizadas';
         });
         document.querySelectorAll('button, a, input[type="submit"], input[type="button"]').forEach(el => {
-            const txt = (el.value || el.textContent || '').trim();
+            const isInput = el.tagName === 'INPUT';
+            // Ojo: en <button> el atributo value es "saveResponses"; el texto visible
+            // está en textContent. Solo los <input> usan value como etiqueta.
+            const txt = ((isInput ? el.value : el.textContent) || '').replace(/\s+/g, ' ').trim();
             if (/Save Updated Responses?/i.test(txt)) {
-                if (el.tagName === 'INPUT') el.value = 'Guardar Respuestas Actualizadas';
-                else el.textContent = 'Guardar Respuestas Actualizadas';
+                if (isInput) {
+                    el.value = 'Guardar Respuestas Actualizadas';
+                } else {
+                    // Reemplazar solo los nodos de texto para conservar el icono (glyphicon/fa).
+                    const textNodes = [];
+                    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+                    while (walker.nextNode()) {
+                        if ((walker.currentNode.nodeValue || '').trim()) textNodes.push(walker.currentNode);
+                    }
+                    if (textNodes.length) {
+                        textNodes[0].nodeValue = ' Guardar Respuestas Actualizadas';
+                        for (let i = 1; i < textNodes.length; i++) {
+                            textNodes[i].parentNode.removeChild(textNodes[i]);
+                        }
+                    } else {
+                        el.appendChild(document.createTextNode(' Guardar Respuestas Actualizadas'));
+                    }
+                }
             }
         });
     }
