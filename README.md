@@ -80,8 +80,8 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 
 ### 12. 🧽 Anulación rápida de respuestas en `/editResponses/`
 - Card "Anulación Rápida" sobre la tabla de edición de respuestas con el botón **"Anular todas"**, que vacía de una vez todos los campos *Updated Responses* (los resalta en ámbar para revisarlos antes de guardar).
-- **"Anular por tags"**: detecta los tags de cada pregunta del quiz y permite seleccionar uno o varios tags para anular solo esas preguntas.
-- Botón **"Restaurar"** para devolver los campos a su valor original antes de guardar.
+- **"Anular por tags"**: detecta los tags de cada pregunta del quiz y los muestra en el **orden de las preguntas** (no alfabético); permite seleccionar uno o varios tags para anular solo esas preguntas.
+- Botón **"Restaurar"** que aparece **solo cuando hay cambios** en la página y devuelve los campos a su valor original antes de guardar.
 - Los cambios no se envían solos: siempre se revisan y se confirman con **"Guardar Respuestas Actualizadas"**.
 
 ---

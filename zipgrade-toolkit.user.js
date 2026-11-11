@@ -6729,6 +6729,7 @@
                     if ((input.value || '').trim() !== '') {
                         input.classList.remove('zg-edit-resp-annulled');
                     }
+                    zgUpdateRestoreVisibility();
                 });
             }
             rows.push({ tr, num, input });
@@ -6748,6 +6749,18 @@
         if (!el) return;
         el.textContent = message;
         el.style.color = tone === 'warn' ? '#b45309' : (tone === 'ok' ? '#047857' : '#475569');
+    }
+
+    // El botón "Restaurar" solo tiene sentido si alguna respuesta cambió en esta carga.
+    function zgUpdateRestoreVisibility() {
+        const btn = document.getElementById('zg-edit-resp-restore');
+        if (!btn) return;
+        const rows = zgGetEditResponseRows();
+        const hasChanges = rows.some(row => {
+            const initial = row.input.dataset.zgInitialValue;
+            return (row.input.value || '') !== (initial === undefined ? '' : initial);
+        });
+        btn.style.display = hasChanges ? '' : 'none';
     }
 
     // Lee los tags por pregunta desde el detalle de la hoja (o, si falla, desde
@@ -6854,10 +6867,25 @@
 
         list.innerHTML = '';
         const counts = {};
-        Object.values(tagMap).forEach(tags => {
-            tags.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; });
+        const firstQuestion = {};
+
+        // Recorrer las preguntas en su orden (1, 2, 3...) para que los tags
+        // aparezcan en el orden en que se usan, no alfabéticamente.
+        Object.keys(tagMap)
+            .map(n => parseInt(n, 10))
+            .filter(n => !isNaN(n))
+            .sort((a, b) => a - b)
+            .forEach(num => {
+                (tagMap[num] || []).forEach(tag => {
+                    counts[tag] = (counts[tag] || 0) + 1;
+                    if (firstQuestion[tag] === undefined) firstQuestion[tag] = num;
+                });
+            });
+
+        const names = Object.keys(counts).sort((a, b) => {
+            const diff = firstQuestion[a] - firstQuestion[b];
+            return diff !== 0 ? diff : a.localeCompare(b, 'es', { sensitivity: 'base' });
         });
-        const names = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
         if (!names.length) {
             if (status) status.textContent = 'Este quiz no tiene tags por pregunta.';
@@ -6899,6 +6927,7 @@
             zgSetEditResponseInput(row.input, '');
             row.input.classList.add('zg-edit-resp-annulled');
         });
+        zgUpdateRestoreVisibility();
         zgSetEditRespStatus(`Se anularon ${rows.length} respuestas. Revisa y pulsa "Guardar Respuestas Actualizadas".`, 'ok');
     }
 
@@ -6909,6 +6938,7 @@
             zgSetEditResponseInput(row.input, row.input.dataset.zgInitialValue || '');
             row.input.classList.remove('zg-edit-resp-annulled');
         });
+        zgUpdateRestoreVisibility();
         zgSetEditRespStatus('Respuestas restauradas a su valor original.', 'ok');
     }
 
@@ -6930,19 +6960,19 @@
             zgSetEditResponseInput(row.input, '');
             row.input.classList.add('zg-edit-resp-annulled');
         });
+        zgUpdateRestoreVisibility();
         zgSetEditRespStatus(`Se anularon ${targets.length} preguntas de ${checked.length} tag(s). Revisa y guarda.`, 'ok');
     }
 
-    function zgTranslateEditResponsesPage(form) {
-        const scope = form || document;
-        scope.querySelectorAll('table thead th, table thead td').forEach(th => {
+    function zgTranslateEditResponsesPage() {
+        document.querySelectorAll('table thead th, table thead td').forEach(th => {
             const txt = (th.textContent || '').replace(/\s+/g, ' ').trim();
-            if (txt === 'Current Responses') th.textContent = 'Respuestas Actuales';
-            else if (txt === 'Updated Responses') th.textContent = 'Respuestas Actualizadas';
+            if (/^Current Responses?$/i.test(txt)) th.textContent = 'Respuestas Actuales';
+            else if (/^Updated Responses?$/i.test(txt)) th.textContent = 'Respuestas Actualizadas';
         });
-        scope.querySelectorAll('button, a.btn, input[type="submit"], input[type="button"]').forEach(el => {
+        document.querySelectorAll('button, a, input[type="submit"], input[type="button"]').forEach(el => {
             const txt = (el.value || el.textContent || '').trim();
-            if (/^Save Updated Responses$/i.test(txt)) {
+            if (/Save Updated Responses?/i.test(txt)) {
                 if (el.tagName === 'INPUT') el.value = 'Guardar Respuestas Actualizadas';
                 else el.textContent = 'Guardar Respuestas Actualizadas';
             }
@@ -6953,7 +6983,7 @@
         if (!/editResponses/i.test(window.location.pathname)) return;
 
         const form = zgFindEditResponsesForm();
-        zgTranslateEditResponsesPage(form);
+        zgTranslateEditResponsesPage();
 
         if (document.getElementById('zg-edit-resp-card')) return;
 
@@ -6987,7 +7017,7 @@
                 <button id="zg-edit-resp-annul-all" type="button" class="btn btn-danger btn-sm" style="font-weight:600;">
                     <i class="fa fa-ban"></i> Anular todas
                 </button>
-                <button id="zg-edit-resp-restore" type="button" class="btn btn-default btn-sm" style="font-weight:600;">
+                <button id="zg-edit-resp-restore" type="button" class="btn btn-default btn-sm" style="font-weight:600; display:none;">
                     <i class="fa fa-undo"></i> Restaurar
                 </button>
             </div>
@@ -7016,6 +7046,10 @@
         if (restoreBtn) restoreBtn.addEventListener('click', zgRestoreEditResponses);
         if (annulTagsBtn) annulTagsBtn.addEventListener('click', zgAnnuEditResponsesByTags);
 
+        // Guardar los valores iniciales de esta carga y mostrar "Restaurar" solo si hay cambios.
+        zgGetEditResponseRows();
+        zgUpdateRestoreVisibility();
+
         zgGetQuestionTags().then(tagMap => {
             zgRenderEditResponseTags(tagMap || {});
         }).catch(e => {
@@ -7023,6 +7057,11 @@
             const status = document.getElementById('zg-edit-resp-tags-status');
             if (status) status.textContent = 'No se pudieron cargar los tags.';
         });
+
+        // Por si el botón de guardar se renderiza un poco después.
+        setTimeout(() => {
+            if (/editResponses/i.test(window.location.pathname)) zgTranslateEditResponsesPage();
+        }, 700);
     }
 
     async function initUI() {
