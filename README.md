@@ -37,7 +37,7 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 ### 3. 🎓 Ordenación Académica por Grados
 - **`/classes/`**: ordena las clases de menor a mayor grado y sección (ej: `6-1`, `6-2`, `7-1`, `10-1`, `11-2`). Las clases sin estudiantes se envían al final.
 - **`/students/`**: ordena los estudiantes por grado y **código/Student ID** (menor a mayor).
-- **`/quizzes/`**: ordena los quizzes por **Fecha > Curso** o **Curso > Fecha** (modo elegible desde la card y recordado entre visitas).
+- **`/quizzes/`**: ordena los quizzes por **Fecha > Curso** o **Curso > Fecha** (modo elegible desde la card y recordado entre visitas). Un botón adicional permite invertir la fecha: **Más antiguas primero** o **Más recientes primero**, también recordado entre visitas.
 - **Creación/edición de quiz**: ordena la lista de checkboxes de cursos académicamente (clases individuales primero, luego rangos como `10° - 11°`, y `Sandbox`/`Teachers` al final).
 
 ### 4. 📋 Selector Automático "Show entries" -> "All"
@@ -55,7 +55,7 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 - **Caché de consultas**: el estado de escaneados se cachea en `localStorage` por **5 minutos** y el mapa de estudiantes de `/classes/` por **10 minutos**, evitando recargar las pesadas páginas `/all/` en cada visita.
 - **Apertura rápida de modales**: el HTML de las páginas `/all/` y de edición que la columna Estado ya descarga en segundo plano se reutiliza en memoria (TTL 5 min) al abrir **Copiar/Editar**, por lo que los modales abren casi al instante sin volver a descargar.
 - **Descarga Rápida**: checkbox + **selector de formato personalizado** (preseleccionado y bloqueado si solo hay uno) + botón de descarga individual.
-- Card "ZipGrade Toolkit" con Seleccionar Todo, Modo de Orden, botón **"Descargar Resultados"** en lote con barra de progreso y banner.
+- Card "ZipGrade Toolkit" con Seleccionar Todo, Modo de Orden (incluida la dirección de la fecha), botón **"Descargar Resultados"** en lote con barra de progreso y banner.
 - Cada archivo se renombra automáticamente como `Resultados_<nombre hasta sesión>`.
 
 ### 8. 📅 Formato de fecha en detalle del quiz y copia de quizzes
@@ -77,6 +77,12 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 - Verifica automáticamente si cada quiz tiene **key answers** cargadas (`✔ Key` en verde / `✘ Sin key` en rojo / `?` si no se pudo comprobar).
 - Botón para **subir un CSV de key answers** usando el endpoint oficial de importación de ZipGrade, con confirmación vía *toast*.
 - Enlace **"Ver key ↪"** que abre el editor de key answers del quiz en una pestaña nueva.
+
+### 12. 🧽 Anulación rápida de respuestas en `/editResponses/`
+- Card "Anulación Rápida" sobre la tabla de edición de respuestas con el botón **"Anular todas"**, que vacía de una vez todos los campos *Updated Responses* (los resalta en ámbar para revisarlos antes de guardar).
+- **"Anular por tags"**: detecta los tags de cada pregunta del quiz y permite seleccionar uno o varios tags para anular solo esas preguntas.
+- Botón **"Restaurar"** para devolver los campos a su valor original antes de guardar.
+- Los cambios no se envían solos: siempre se revisan y se confirman con **"Guardar Respuestas Actualizadas"**.
 
 ---
 

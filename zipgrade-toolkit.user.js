@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      30.0
+// @version      31.0
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -468,6 +468,12 @@
                 opacity: 0 !important;
                 cursor: pointer !important;
             }
+            /* Respuestas anuladas en /editResponses/: campo resaltado para revisar antes de guardar */
+            .zg-edit-resp-annulled {
+                background: #fef3c7 !important;
+                border-color: #f59e0b !important;
+                box-shadow: 0 0 0 1px rgba(245,158,11,0.25) !important;
+            }
          `;
         document.head.appendChild(style);
         // Cada vez que el sitio agregue CSS después de este estilo, recolocarlo al final
@@ -496,7 +502,7 @@
     }
     injectSharedStyles();
 
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '30.0';
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '31.0';
     let availableSheets = [];
     let cancelDownloadRequested = false;
     const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
@@ -1202,13 +1208,15 @@
 
     // Comparador único de filas de quizzes. Además de fecha/curso, desempata por
     // sesión (S1 antes que S2) y, si aún empatan, por nombre.
-    function compareQuizRows(a, b, mode) {
+    // `dir` solo afecta a la fecha: 'asc' = antiguas primero, 'desc' = recientes primero.
+    function compareQuizRows(a, b, mode, dir = 'asc') {
+        const dateFactor = dir === 'desc' ? -1 : 1;
         let cmp = 0;
         if (mode === 'class-date') {
             cmp = getQuizClassWeight(a) - getQuizClassWeight(b);
-            if (cmp === 0) cmp = getQuizDateValue(a) - getQuizDateValue(b);
+            if (cmp === 0) cmp = (getQuizDateValue(a) - getQuizDateValue(b)) * dateFactor;
         } else {
-            cmp = getQuizDateValue(a) - getQuizDateValue(b);
+            cmp = (getQuizDateValue(a) - getQuizDateValue(b)) * dateFactor;
             if (cmp === 0) cmp = getQuizClassWeight(a) - getQuizClassWeight(b);
         }
         if (cmp === 0) cmp = getQuizSessionNumber(a) - getQuizSessionNumber(b);
@@ -1350,6 +1358,44 @@
         centerQuizTableHeaders();
     }
 
+    // Dirección de la fecha: 'asc' = más antiguas primero, 'desc' = más recientes primero.
+    // Se recuerda entre visitas igual que el modo de orden.
+    function getQuizSortDirection() {
+        return localStorage.getItem('zipgrade_toolkit_quiz_sort_dir') === 'desc' ? 'desc' : 'asc';
+    }
+
+    function updateQuizSortDirButton() {
+        let btn = document.getElementById('zg-sort-dir-date');
+        if (!btn) {
+            // Si la card ya existía (recarga en caliente), añadir el botón junto a los modos.
+            const group = document.getElementById('zg-sort-mode-group');
+            if (!group || !group.parentNode) return;
+            btn = document.createElement('button');
+            btn.id = 'zg-sort-dir-date';
+            btn.type = 'button';
+            btn.className = 'btn btn-default btn-xs';
+            btn.style.cssText = 'font-weight:500; margin-left:4px;';
+            group.parentNode.insertBefore(btn, group.nextSibling);
+            btn.dataset.zgBound = 'true';
+            btn.addEventListener('click', handleQuizSortDirClick);
+        }
+        const dir = getQuizSortDirection();
+        const icon = dir === 'desc' ? 'fa-sort-amount-desc' : 'fa-sort-amount-asc';
+        const label = dir === 'desc' ? 'Más recientes primero' : 'Más antiguas primero';
+        btn.innerHTML = `<i class="fa ${icon}"></i> ${label}`;
+        btn.title = dir === 'desc'
+            ? 'Fecha: más reciente primero. Clic para ver las más antiguas primero.'
+            : 'Fecha: más antigua primero. Clic para ver las más recientes primero.';
+    }
+
+    function handleQuizSortDirClick(e) {
+        if (e) e.preventDefault();
+        const next = getQuizSortDirection() === 'asc' ? 'desc' : 'asc';
+        localStorage.setItem('zipgrade_toolkit_quiz_sort_dir', next);
+        updateQuizSortDirButton();
+        applyQuizzesSort();
+    }
+
     function createQuizzesSortControls() {
         const tableWrapper = document.getElementById('quizTable_wrapper') || document.getElementById('quizTable');
         if (!tableWrapper) return;
@@ -1382,9 +1428,9 @@
                             <i class="fa fa-square-o"></i> Deseleccionar Todo
                         </button>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <span style="font-weight:600; color:#475569; font-size:13px;"><i class="fa fa-sort"></i> Modo de Orden:</span>
-                        <div class="btn-group" style="margin:0;">
+                        <div class="btn-group" id="zg-sort-mode-group" style="margin:0;">
                             <button id="zg-sort-mode-date" type="button" class="btn btn-xs ${savedMode === 'date-class' ? 'btn-primary' : 'btn-default'}" style="font-weight:500;">
                                 <i class="fa fa-calendar"></i> Fecha > Curso
                             </button>
@@ -1392,6 +1438,9 @@
                                 <i class="fa fa-graduation-cap"></i> Curso > Fecha
                             </button>
                         </div>
+                        <button id="zg-sort-dir-date" type="button" class="btn btn-default btn-xs" style="font-weight:500; margin-left:4px;">
+                            <i class="fa fa-sort-amount-asc"></i> Más antiguas primero
+                        </button>
                     </div>
                 </div>
 
@@ -1446,6 +1495,15 @@
         // Botones de orden
         const btnClass = document.getElementById('zg-sort-mode-class');
         const btnDate = document.getElementById('zg-sort-mode-date');
+
+        // Botón de dirección de fecha (antiguas ↔ recientes)
+        updateQuizSortDirButton();
+        const btnSortDir = document.getElementById('zg-sort-dir-date');
+        if (btnSortDir && !btnSortDir.dataset.zgBound) {
+            btnSortDir.dataset.zgBound = 'true';
+            btnSortDir.addEventListener('click', handleQuizSortDirClick);
+        }
+
         if (btnClass && !btnClass.dataset.zgBound) {
             btnClass.dataset.zgBound = 'true';
             btnClass.addEventListener('click', (e) => {
@@ -1525,6 +1583,7 @@
         if (!table) return;
 
         const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+        const dir = getQuizSortDirection();
 
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
             try {
@@ -1541,7 +1600,7 @@
                             settings.aoColumns[4].aDataSort = [4, 2, 3];
                             settings.aoColumns[4].orderData = [4, 2, 3];
                         }
-                        dt.order([[2, 'asc'], [4, 'asc'], [3, 'asc']]);
+                        dt.order([[2, 'asc'], [4, dir], [3, 'asc']]);
                     } else {
                         if (settings.aoColumns[2]) {
                             settings.aoColumns[2].aDataSort = [2, 4, 3];
@@ -1551,13 +1610,13 @@
                             settings.aoColumns[4].aDataSort = [4, 2, 3];
                             settings.aoColumns[4].orderData = [4, 2, 3];
                         }
-                        dt.order([[4, 'asc'], [2, 'asc'], [3, 'asc']]);
+                        dt.order([[4, dir], [2, 'asc'], [3, 'asc']]);
                     }
                 }
 
                 dt.rows().invalidate('dom');
                 dt.draw(false);
-                console.log(`✅ [ZipGrade] Reordenado por modo (DataTables): ${mode}`);
+                console.log(`✅ [ZipGrade] Reordenado por modo (DataTables): ${mode} / fecha ${dir}`);
                 return;
             } catch (e) {
                 console.warn("No se pudo reordenar via DataTables, cayendo en fallback manual:", e);
@@ -1569,7 +1628,7 @@
         let rows = Array.from(tbody.querySelectorAll('tr'));
         if (rows.length === 0) return;
 
-        rows.sort((a, b) => compareQuizRows(a, b, mode));
+        rows.sort((a, b) => compareQuizRows(a, b, mode, dir));
 
         const fragment = document.createDocumentFragment();
         rows.forEach(row => fragment.appendChild(row));
@@ -1621,6 +1680,7 @@
         });
 
         const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+        const dir = getQuizSortDirection();
 
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
             try {
@@ -1641,9 +1701,9 @@
 
                 if (!hasSortedQuizzesInitially) {
                     if (mode === 'class-date') {
-                        dt.order([[2, 'asc'], [4, 'asc'], [3, 'asc']]);
+                        dt.order([[2, 'asc'], [4, dir], [3, 'asc']]);
                     } else {
-                        dt.order([[4, 'asc'], [2, 'asc'], [3, 'asc']]);
+                        dt.order([[4, dir], [2, 'asc'], [3, 'asc']]);
                     }
                     hasSortedQuizzesInitially = true;
                 }
@@ -1655,7 +1715,7 @@
             }
         }
 
-        rows.sort((a, b) => compareQuizRows(a, b, mode));
+        rows.sort((a, b) => compareQuizRows(a, b, mode, dir));
 
         const fragment = document.createDocumentFragment();
         rows.forEach(row => fragment.appendChild(row));
@@ -6603,6 +6663,368 @@
             if (submitBtn) submitBtn.innerText = 'Exportar como PDF';
         }
     }
+    // ==========================================
+    // 6.3. ANULACIÓN RÁPIDA DE RESPUESTAS EN /editResponses/
+    // ==========================================
+    // Permite vaciar de una vez los campos "Updated Responses" (anular todo)
+    // o solo las preguntas que pertenecen a los tags seleccionados.
+    let zgEditRespTagsCache = null;
+    let zgEditRespTagsPromise = null;
+    let zgEditRespInitAttempts = 0;
+
+    function zgFindEditResponsesForm() {
+        const isSaveBtn = (el) => /save updated responses|guardar respuestas actualizadas/i.test(
+            (el.value || el.textContent || '').trim()
+        );
+        return Array.from(document.querySelectorAll('form')).find(form => {
+            const action = form.getAttribute('action') || '';
+            if (/editResponses/i.test(action)) return true;
+            if (Array.from(form.querySelectorAll('input[type="submit"], button')).some(isSaveBtn)) return true;
+            return /save updated responses|guardar respuestas actualizadas/i.test(form.textContent || '');
+        }) || null;
+    }
+
+    function zgFindEditResponsesTable() {
+        const form = zgFindEditResponsesForm();
+        const scope = form || document;
+        const tables = Array.from(scope.querySelectorAll('table'));
+
+        // 1) La tabla que tenga la columna "Updated Responses" (o su traducción).
+        for (const table of tables) {
+            const heads = Array.from(table.querySelectorAll('thead th, thead td'))
+                .map(h => (h.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
+            if (heads.some(h => /updated responses|respuestas actualizadas/.test(h))) return table;
+        }
+
+        // 2) La que tenga más campos de texto (la tabla de respuestas).
+        let best = null;
+        let bestCount = 0;
+        tables.forEach(table => {
+            const count = table.querySelectorAll('input[type="text"], input[type="number"], input:not([type])').length;
+            if (count > bestCount) {
+                best = table;
+                bestCount = count;
+            }
+        });
+        return best || scope.querySelector('table');
+    }
+
+    function zgGetEditResponseRows() {
+        const table = zgFindEditResponsesTable();
+        if (!table) return [];
+        const rows = [];
+        table.querySelectorAll('tbody tr').forEach(tr => {
+            const cells = tr.cells;
+            if (!cells || cells.length < 2) return;
+            const num = parseInt((cells[0].textContent || '').replace(/[^\d]/g, ''), 10);
+            if (!num) return;
+            const input = tr.querySelector('input[type="text"], input[type="number"], input:not([type]), select');
+            if (!input) return;
+            if (input.dataset.zgInitialValue === undefined) {
+                input.dataset.zgInitialValue = input.value;
+            }
+            if (input.dataset.zgAnnulWatch !== 'true') {
+                input.dataset.zgAnnulWatch = 'true';
+                input.addEventListener('input', () => {
+                    if ((input.value || '').trim() !== '') {
+                        input.classList.remove('zg-edit-resp-annulled');
+                    }
+                });
+            }
+            rows.push({ tr, num, input });
+        });
+        return rows;
+    }
+
+    function zgSetEditResponseInput(input, value) {
+        if (!input) return;
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function zgSetEditRespStatus(message, tone) {
+        const el = document.getElementById('zg-edit-resp-status');
+        if (!el) return;
+        el.textContent = message;
+        el.style.color = tone === 'warn' ? '#b45309' : (tone === 'ok' ? '#047857' : '#475569');
+    }
+
+    // Lee los tags por pregunta desde el detalle de la hoja (o, si falla, desde
+    // la página de la clave). Devuelve { numeroDePregunta: ['tag1', 'tag2'] }.
+    function zgParseQuestionTagsFromDoc(doc) {
+        const tables = Array.from(doc.querySelectorAll('table'));
+        for (const table of tables) {
+            const heads = Array.from(table.querySelectorAll('thead th, thead td'))
+                .map(h => (h.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
+            let tagIdx = heads.findIndex(h => h === 'tags' || h === 'etiquetas');
+            if (tagIdx === -1) {
+                // Evitar confundir "Tag Name"/"Nombre de Tag" con una columna de tags por pregunta.
+                tagIdx = heads.findIndex(h => /^tags?\b/.test(h) && !/name|nombre/.test(h));
+            }
+            if (tagIdx === -1) continue;
+
+            let numIdx = heads.findIndex(h => ['#', 'no', 'no.', 'q#', 'question', 'pregunta'].includes(h));
+            if (numIdx === -1) {
+                const firstHead = (heads[0] || '').trim();
+                if (/^#/.test(firstHead) || /^(no\.?|q#|question|pregunta)\b/.test(firstHead)) numIdx = 0;
+            }
+            if (numIdx === -1) continue;
+
+            const map = {};
+            let found = 0;
+            table.querySelectorAll('tbody tr').forEach(tr => {
+                const cells = tr.cells;
+                if (!cells || cells.length <= Math.max(tagIdx, numIdx)) return;
+                const num = parseInt((cells[numIdx].textContent || '').replace(/[^\d]/g, ''), 10);
+                if (!num) return;
+
+                const tagCell = cells[tagIdx];
+                let tags = Array.from(tagCell.querySelectorAll('a, span, .label'))
+                    .map(el => (el.textContent || '').trim())
+                    .filter(Boolean);
+                if (!tags.length) {
+                    // Fallback: texto plano (respetando saltos <br>).
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = (tagCell.innerHTML || '').replace(/<br\s*\/?>/gi, '\n');
+                    tags = (tmp.textContent || '')
+                        .split(/[,;\n|]/)
+                        .map(t => t.trim())
+                        .filter(Boolean);
+                }
+                tags = tags.filter(t => t && t !== '-' && t !== '—' && t.toLowerCase() !== 'tags');
+                tags = tags.flatMap(t => t.split(/[,;]/)).map(t => t.trim()).filter(Boolean);
+                if (tags.length) {
+                    map[num] = Array.from(new Set(tags));
+                    found++;
+                }
+            });
+            if (found) return map;
+        }
+        return {};
+    }
+
+    async function zgGetQuestionTags() {
+        if (zgEditRespTagsCache) return zgEditRespTagsCache;
+        if (zgEditRespTagsPromise) return zgEditRespTagsPromise;
+
+        zgEditRespTagsPromise = (async () => {
+            const urls = [];
+            const path = window.location.pathname;
+            if (/editResponses\/?$/i.test(path)) {
+                urls.push(path.replace(/editResponses\/?$/i, ''));
+            }
+            const quizIdMatch = path.match(/\/quiz\/([^/]+)\//);
+            if (quizIdMatch) {
+                urls.push(`/quiz/${quizIdMatch[1]}/edit/key/0/?subjectGuid=all`);
+            }
+
+            for (const url of urls) {
+                try {
+                    let html = zgRawPageGet(url);
+                    if (html === null) {
+                        const res = await customRequest({ method: 'GET', url }, 30000);
+                        if (res.status !== 200) continue;
+                        html = res.responseText || '';
+                        zgRawPageSet(url, html);
+                    }
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const map = zgParseQuestionTagsFromDoc(doc);
+                    if (Object.keys(map).length) return map;
+                } catch (e) {
+                    console.warn('[ZipGrade] No se pudieron leer los tags desde', url, e);
+                }
+            }
+            return {};
+        })();
+
+        try {
+            zgEditRespTagsCache = await zgEditRespTagsPromise;
+        } finally {
+            zgEditRespTagsPromise = null;
+        }
+        return zgEditRespTagsCache;
+    }
+
+    function zgRenderEditResponseTags(tagMap) {
+        const list = document.getElementById('zg-edit-resp-tags-list');
+        const status = document.getElementById('zg-edit-resp-tags-status');
+        const btn = document.getElementById('zg-edit-resp-annul-tags');
+        if (!list) return;
+
+        list.innerHTML = '';
+        const counts = {};
+        Object.values(tagMap).forEach(tags => {
+            tags.forEach(tag => { counts[tag] = (counts[tag] || 0) + 1; });
+        });
+        const names = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+        if (!names.length) {
+            if (status) status.textContent = 'Este quiz no tiene tags por pregunta.';
+            if (btn) btn.disabled = true;
+            return;
+        }
+
+        names.forEach(name => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display:inline-flex; align-items:center; gap:5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:3px 10px; margin:0; font-size:12px; font-weight:500; color:#334155; cursor:pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = name;
+            cb.style.cssText = 'margin:0; cursor:pointer;';
+            const span = document.createElement('span');
+            span.textContent = name;
+            const count = document.createElement('small');
+            count.textContent = `(${counts[name]})`;
+            count.style.cssText = 'color:#94a3b8;';
+            label.append(cb, span, count);
+            list.appendChild(label);
+        });
+
+        if (status) status.textContent = `${names.length} tag(s) disponibles.`;
+        if (btn) btn.disabled = false;
+    }
+
+    function zgAnnuAllEditResponses() {
+        const rows = zgGetEditResponseRows();
+        if (!rows.length) {
+            zgSetEditRespStatus('No se encontraron respuestas editables en esta página.', 'warn');
+            return;
+        }
+        const anyFilled = rows.some(row => (row.input.value || '').trim() !== '');
+        if (anyFilled && !confirm('¿Anular todas las respuestas actualizadas? Después podrás revisar y guardar.')) {
+            return;
+        }
+        rows.forEach(row => {
+            zgSetEditResponseInput(row.input, '');
+            row.input.classList.add('zg-edit-resp-annulled');
+        });
+        zgSetEditRespStatus(`Se anularon ${rows.length} respuestas. Revisa y pulsa "Guardar Respuestas Actualizadas".`, 'ok');
+    }
+
+    function zgRestoreEditResponses() {
+        const rows = zgGetEditResponseRows();
+        if (!rows.length) return;
+        rows.forEach(row => {
+            zgSetEditResponseInput(row.input, row.input.dataset.zgInitialValue || '');
+            row.input.classList.remove('zg-edit-resp-annulled');
+        });
+        zgSetEditRespStatus('Respuestas restauradas a su valor original.', 'ok');
+    }
+
+    function zgAnnuEditResponsesByTags() {
+        const checked = Array.from(document.querySelectorAll('#zg-edit-resp-tags-list input[type="checkbox"]:checked'))
+            .map(cb => cb.value);
+        if (!checked.length) {
+            zgSetEditRespStatus('Selecciona al menos un tag para anular sus preguntas.', 'warn');
+            return;
+        }
+        const rows = zgGetEditResponseRows();
+        const tagsByQuestion = zgEditRespTagsCache || {};
+        const targets = rows.filter(row => (tagsByQuestion[row.num] || []).some(tag => checked.includes(tag)));
+        if (!targets.length) {
+            zgSetEditRespStatus('Ninguna pregunta coincide con los tags seleccionados.', 'warn');
+            return;
+        }
+        targets.forEach(row => {
+            zgSetEditResponseInput(row.input, '');
+            row.input.classList.add('zg-edit-resp-annulled');
+        });
+        zgSetEditRespStatus(`Se anularon ${targets.length} preguntas de ${checked.length} tag(s). Revisa y guarda.`, 'ok');
+    }
+
+    function zgTranslateEditResponsesPage(form) {
+        const scope = form || document;
+        scope.querySelectorAll('table thead th, table thead td').forEach(th => {
+            const txt = (th.textContent || '').replace(/\s+/g, ' ').trim();
+            if (txt === 'Current Responses') th.textContent = 'Respuestas Actuales';
+            else if (txt === 'Updated Responses') th.textContent = 'Respuestas Actualizadas';
+        });
+        scope.querySelectorAll('button, a.btn, input[type="submit"], input[type="button"]').forEach(el => {
+            const txt = (el.value || el.textContent || '').trim();
+            if (/^Save Updated Responses$/i.test(txt)) {
+                if (el.tagName === 'INPUT') el.value = 'Guardar Respuestas Actualizadas';
+                else el.textContent = 'Guardar Respuestas Actualizadas';
+            }
+        });
+    }
+
+    function initEditResponsesPage() {
+        if (!/editResponses/i.test(window.location.pathname)) return;
+
+        const form = zgFindEditResponsesForm();
+        zgTranslateEditResponsesPage(form);
+
+        if (document.getElementById('zg-edit-resp-card')) return;
+
+        const table = zgFindEditResponsesTable();
+        if (!table) {
+            if (zgEditRespInitAttempts++ < 6) setTimeout(initEditResponsesPage, 400);
+            return;
+        }
+
+        const card = document.createElement('div');
+        card.id = 'zg-edit-resp-card';
+        card.style.cssText = `
+            display: flex; flex-direction: column; gap: 10px;
+            background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
+            padding: 14px 18px; margin: 0 0 16px 0; width: 100%;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
+        `;
+        card.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; border-bottom:1px solid #f1f5f9; padding-bottom:8px;">
+                <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
+                    <i class="fa fa-eraser"></i> Anulación Rápida
+                    <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
+                </span>
+                <span id="zg-edit-resp-status" style="font-size:12px; color:#475569;">
+                    <i class="fa fa-info-circle"></i> Anula respuestas sin editar una por una.
+                </span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <button id="zg-edit-resp-annul-all" type="button" class="btn btn-danger btn-sm" style="font-weight:600;">
+                    <i class="fa fa-ban"></i> Anular todas
+                </button>
+                <button id="zg-edit-resp-restore" type="button" class="btn btn-default btn-sm" style="font-weight:600;">
+                    <i class="fa fa-undo"></i> Restaurar
+                </button>
+            </div>
+            <div style="border-top:1px dashed #e2e8f0; padding-top:10px; display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                    <span style="font-weight:600; font-size:13px; color:#334155;"><i class="fa fa-tags"></i> Anular por tags:</span>
+                    <span id="zg-edit-resp-tags-status" style="font-size:12px; color:#64748b;">Cargando tags...</span>
+                </div>
+                <div id="zg-edit-resp-tags-list" style="display:flex; flex-wrap:wrap; gap:6px; max-height:140px; overflow-y:auto;"></div>
+                <div>
+                    <button id="zg-edit-resp-annul-tags" type="button" class="btn btn-warning btn-sm" style="font-weight:600;" disabled>
+                        <i class="fa fa-tags"></i> Anular preguntas de los tags seleccionados
+                    </button>
+                </div>
+            </div>
+        `;
+
+        const responsive = table.closest('.table-responsive');
+        const anchor = responsive || table;
+        anchor.parentNode.insertBefore(card, anchor);
+
+        const annulAllBtn = document.getElementById('zg-edit-resp-annul-all');
+        const restoreBtn = document.getElementById('zg-edit-resp-restore');
+        const annulTagsBtn = document.getElementById('zg-edit-resp-annul-tags');
+        if (annulAllBtn) annulAllBtn.addEventListener('click', zgAnnuAllEditResponses);
+        if (restoreBtn) restoreBtn.addEventListener('click', zgRestoreEditResponses);
+        if (annulTagsBtn) annulTagsBtn.addEventListener('click', zgAnnuEditResponsesByTags);
+
+        zgGetQuestionTags().then(tagMap => {
+            zgRenderEditResponseTags(tagMap || {});
+        }).catch(e => {
+            console.warn('[ZipGrade] No se pudieron cargar los tags:', e);
+            const status = document.getElementById('zg-edit-resp-tags-status');
+            if (status) status.textContent = 'No se pudieron cargar los tags.';
+        });
+    }
+
     async function initUI() {
         console.log("⚙️ [ZipGrade] Inicializando interfaz y ordenando cursos...");
         ensureAllEntriesShown();
@@ -7512,6 +7934,7 @@
 
     if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
         translatePaperDetailPage();
+        initEditResponsesPage();
     } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
         translateQuizDetailPage();
     }
@@ -7521,6 +7944,7 @@
             runGlobalHeaderTranslation();
             if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
                 translatePaperDetailPage();
+                initEditResponsesPage();
             } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
                 translateQuizDetailPage();
             }
@@ -7558,6 +7982,7 @@
     } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
         const initPaper = () => {
             translatePaperDetailPage();
+            initEditResponsesPage();
         };
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initPaper);
