@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.5
+// @version      31.6
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -1281,6 +1281,26 @@
         } catch (e) {
             console.warn("No se pudieron cargar selecciones guardadas", e);
         }
+    }
+
+    // Limpia TODAS las asignaciones de hojas: UI, selección y configuración guardada.
+    // No toca los cursos ni los datos de ZipGrade.
+    function clearClassMappings() {
+        document.querySelectorAll('.zg-row-sheet').forEach(sel => { sel.value = ''; });
+        getNativeClassChecks().forEach(chk => setNativeCheckboxChecked(chk, false));
+
+        // Borrar la configuración persistida de todas las sesiones (S1, S2, ...)
+        zgStorage.keys(STORAGE_KEY_MAPPINGS).forEach(key => zgStorage.remove(key));
+
+        const bulkSel = document.getElementById('zg-bulk-apply-sheet');
+        if (bulkSel) bulkSel.value = '';
+
+        const masterChk = document.getElementById('zg-master-check');
+        if (masterChk) {
+            masterChk.checked = false;
+            refreshUniformVisual(masterChk);
+        }
+        updateSelectedCounter();
     }
 
     // Casillas NATIVAS de ZipGrade en la tabla de /classes/ (columna 0). Es la
@@ -3316,6 +3336,47 @@
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
         return { overlay, modal, close };
+    }
+
+    // Confirmación reutilizable (misma estética que los modales del toolkit).
+    // Devuelve una promesa que resuelve true/false.
+    function zgConfirm(options = {}) {
+        const {
+            title = 'Confirmar acción',
+            message = '',
+            confirmLabel = 'Confirmar',
+            cancelLabel = 'Cancelar',
+            icon = 'fa-exclamation-triangle',
+            variant = 'zg-btn-danger',
+            width = 460
+        } = options;
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+
+            const { modal, close } = zgCreateModal({
+                title,
+                icon,
+                width,
+                bodyHtml: `<div style="font-size:13px; color:#334155; line-height:1.6;">${message}</div>`,
+                actions: [
+                    { id: 'zg-confirm-cancel', label: cancelLabel, cancel: true },
+                    { id: 'zg-confirm-accept', label: confirmLabel, icon: 'fa-check', variant }
+                ],
+                onClose: () => finish(false)
+            });
+
+            modal.querySelector('#zg-confirm-accept').addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
+                finish(true);
+                close();
+            });
+        });
     }
 
     // Envía un formulario urlencoded con CSRF/campos y devuelve un resultado uniforme.
@@ -7692,6 +7753,9 @@
                                     <i class="fa fa-download"></i> Importar Config
                                     <input type="file" id="zg-file-input" accept=".json" style="display:none;" />
                                 </label>
+                                <button id="zg-btn-clear-mappings" type="button" class="zg-btn zg-btn-sm zg-btn-soft-danger" title="Quitar todas las hojas asignadas y borrar la configuración guardada (S1/S2)">
+                                    <i class="fa fa-eraser"></i> Limpiar Asignaciones
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -7906,6 +7970,19 @@
             });
 
             document.getElementById('zg-file-input').addEventListener('change', importConfigJSON);
+
+            // Limpiar asignaciones y configuración guardada (sin tocar los cursos)
+            document.getElementById('zg-btn-clear-mappings').addEventListener('click', async (e) => {
+                e.preventDefault();
+                const confirmed = await zgConfirm({
+                    title: 'Limpiar asignaciones',
+                    message: 'Se quitarán todas las hojas asignadas y se borrará la configuración guardada de <strong>S1</strong> y <strong>S2</strong>.<br><br>Los cursos, estudiantes y datos de ZipGrade <strong>no</strong> se modifican. Esta acción no se puede deshacer.',
+                    confirmLabel: 'Sí, limpiar todo'
+                });
+                if (!confirmed) return;
+                clearClassMappings();
+                showZgToast('✔ Asignaciones y configuración guardada eliminadas.', 'success');
+            });
 
             // Listener Descarga Lote
             document.getElementById('zg-btn-download-selected').addEventListener('click', (e) => {
