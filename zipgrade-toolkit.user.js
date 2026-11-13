@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.2
+// @version      31.3
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -580,6 +580,209 @@
             }
             .zg-sort-dir.zg-sort-dir-desc i {
                 color: #2563eb !important;
+            }
+            /* ===== Sistema de botones e inputs del toolkit (reemplaza Bootstrap) ===== */
+            .zg-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                padding: 7px 12px;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #475569;
+                font-size: 12px;
+                font-weight: 600;
+                line-height: 1.2;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                text-decoration: none;
+                text-shadow: none;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                cursor: pointer;
+                white-space: nowrap;
+                transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+            }
+            .zg-btn:hover,
+            .zg-btn:focus {
+                background: #f8fafc;
+                border-color: #cbd5e1;
+                color: #1e293b;
+                text-decoration: none;
+                outline: none;
+            }
+            .zg-btn:focus-visible {
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+            }
+            .zg-btn i {
+                font-size: 12px;
+                color: #94a3b8;
+                transition: color 0.15s ease;
+            }
+            .zg-btn:hover i {
+                color: #64748b;
+            }
+            .zg-btn[disabled],
+            .zg-btn.zg-btn-disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+                box-shadow: none;
+            }
+            .zg-btn-sm {
+                padding: 5px 9px;
+                font-size: 11px;
+                border-radius: 6px;
+                gap: 5px;
+            }
+            .zg-btn-sm i {
+                font-size: 11px;
+            }
+            .zg-btn-lg {
+                padding: 8px 20px;
+                font-size: 13px;
+                border-radius: 8px;
+            }
+            .zg-btn-lg i {
+                font-size: 13px;
+            }
+            .zg-btn-icon {
+                padding: 5px 7px;
+            }
+            .zg-btn-primary {
+                background: #2563eb;
+                border-color: #2563eb;
+                color: #ffffff;
+                box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25);
+            }
+            .zg-btn-primary i {
+                color: #dbeafe;
+            }
+            .zg-btn-primary:hover,
+            .zg-btn-primary:focus {
+                background: #1d4ed8;
+                border-color: #1d4ed8;
+                color: #ffffff;
+            }
+            .zg-btn-primary:hover i {
+                color: #ffffff;
+            }
+            .zg-btn-danger {
+                background: #ef4444;
+                border-color: #ef4444;
+                color: #ffffff;
+                box-shadow: 0 2px 4px rgba(239, 68, 68, 0.22);
+            }
+            .zg-btn-danger i {
+                color: #fee2e2;
+            }
+            .zg-btn-danger:hover,
+            .zg-btn-danger:focus {
+                background: #dc2626;
+                border-color: #dc2626;
+                color: #ffffff;
+            }
+            .zg-btn-danger:hover i {
+                color: #ffffff;
+            }
+            .zg-btn-warning {
+                background: #f59e0b;
+                border-color: #f59e0b;
+                color: #ffffff;
+                box-shadow: 0 2px 4px rgba(245, 158, 11, 0.22);
+            }
+            .zg-btn-warning i {
+                color: #fef3c7;
+            }
+            .zg-btn-warning:hover,
+            .zg-btn-warning:focus {
+                background: #d97706;
+                border-color: #d97706;
+                color: #ffffff;
+            }
+            .zg-btn-soft-danger {
+                background: #fff5f5;
+                border-color: #fecaca;
+                color: #b91c1c;
+            }
+            .zg-btn-soft-danger i {
+                color: #ef4444;
+            }
+            .zg-btn-soft-danger:hover,
+            .zg-btn-soft-danger:focus {
+                background: #fee2e2;
+                border-color: #fca5a5;
+                color: #991b1b;
+            }
+            .zg-btn-soft-violet {
+                background: #f5f3ff;
+                border-color: #ddd6fe;
+                color: #6d28d9;
+            }
+            .zg-btn-soft-violet i {
+                color: #7c3aed;
+            }
+            .zg-btn-soft-violet:hover,
+            .zg-btn-soft-violet:focus {
+                background: #ede9fe;
+                border-color: #c4b5fd;
+                color: #5b21b6;
+            }
+            .zg-input,
+            .zg-select {
+                padding: 6px 10px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #334155;
+                font-size: 12px;
+                font-weight: 500;
+                line-height: 1.3;
+                outline: none;
+                box-sizing: border-box;
+                transition: border-color 0.15s ease, box-shadow 0.15s ease;
+            }
+            .zg-input:focus,
+            .zg-select:focus {
+                border-color: #93c5fd;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+            }
+            .zg-select {
+                padding-right: 28px;
+                cursor: pointer;
+                appearance: none;
+                -webkit-appearance: none;
+                -moz-appearance: none;
+                background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2364748b' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 10px center;
+            }
+            .zg-field-label {
+                font-size: 12px;
+                font-weight: 600;
+                color: #64748b;
+                margin: 0;
+                white-space: nowrap;
+            }
+            .zg-divider-v {
+                width: 1px;
+                align-self: stretch;
+                min-height: 22px;
+                background: #e2e8f0;
+                display: inline-block;
+                margin: 0 2px;
+            }
+            .zg-toolbar-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .zg-toolbar-group {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
             }
          `;
         document.head.appendChild(style);
@@ -1528,10 +1731,10 @@
                         <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
                             <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
                         </span>
-                        <button id="zg-quiz-btn-select-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                        <button id="zg-quiz-btn-select-all" type="button" class="zg-btn zg-btn-sm">
                             <i class="fa fa-check-square-o"></i> Seleccionar Todo
                         </button>
-                        <button id="zg-quiz-btn-deselect-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                        <button id="zg-quiz-btn-deselect-all" type="button" class="zg-btn zg-btn-sm">
                             <i class="fa fa-square-o"></i> Deseleccionar Todo
                         </button>
                     </div>
@@ -1553,12 +1756,12 @@
                 </div>
 
                 <!-- Fila 2: Acción principal + estado -->
-                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                        <button id="zg-btn-quiz-copy-selected" type="button" style="background:#f59e0b; color:#ffffff; border:none; padding:8px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(245,158,11,0.25); transition:all 0.2s;">
+                <div class="zg-toolbar-row">
+                    <div class="zg-toolbar-group">
+                        <button id="zg-btn-quiz-copy-selected" type="button" class="zg-btn zg-btn-lg zg-btn-warning">
                             <i class="fa fa-copy"></i> Copiar Seleccionados
                         </button>
-                        <button id="zg-btn-quiz-download-selected" type="button" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                        <button id="zg-btn-quiz-download-selected" type="button" class="zg-btn zg-btn-lg zg-btn-primary">
                             <i class="fa fa-download"></i> Descargar Resultados
                         </button>
                     </div>
@@ -1577,7 +1780,7 @@
                         <div id="zg-quiz-progress-bar" style="width:0%; background:#2563eb; height:100%; transition:width 0.3s ease;"></div>
                     </div>
                     <div style="display:flex; justify-content:flex-end;">
-                        <button id="zg-quiz-btn-stop" type="button" style="background:#ef4444; color:#ffffff; border:none; padding:4px 14px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+                        <button id="zg-quiz-btn-stop" type="button" class="zg-btn zg-btn-sm zg-btn-danger">
                             <i class="fa fa-stop"></i> Detener
                         </button>
                     </div>
@@ -2496,10 +2699,10 @@
 
             td.innerHTML = `
                 <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
-                    <button type="button" class="zg-btn-quiz-copy btn btn-default btn-xs" style="padding:3px 8px;" title="Copiar quiz (modal)">
+                    <button type="button" class="zg-btn-quiz-copy zg-btn zg-btn-sm zg-btn-icon" title="Copiar quiz (modal)">
                         <i class="fa fa-files-o"></i>
                     </button>
-                    <button type="button" class="zg-btn-quiz-edit btn btn-default btn-xs" style="padding:3px 8px;" title="Editar quiz (modal)">
+                    <button type="button" class="zg-btn-quiz-edit zg-btn zg-btn-sm zg-btn-icon" title="Editar quiz (modal)">
                         <i class="fa fa-pencil"></i>
                     </button>
                 </div>
@@ -2578,7 +2781,24 @@
         const importUrl = `/quiz/${quizId}/edit/importExport/`;
         const importPostUrl = `${importUrl}import/`;
 
-        const csrfResp = await fetch(importUrl, { credentials: 'same-origin' });
+        // Timeout explícito: sin esto, si el servidor no responde la celda
+        // queda pegada en "Subiendo ..." indefinidamente.
+        const doFetch = async (url, options, timeoutMs, phase) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal });
+            } catch (e) {
+                if (e && e.name === 'AbortError') {
+                    throw new Error(`Tiempo de espera agotado al ${phase} (${Math.round(timeoutMs / 1000)}s). Inténtalo de nuevo.`);
+                }
+                throw new Error('Error de red al ' + phase + ': ' + (e && e.message ? e.message : e));
+            } finally {
+                clearTimeout(timer);
+            }
+        };
+
+        const csrfResp = await doFetch(importUrl, {}, 30000, 'cargar la página de importación');
         if (!csrfResp.ok) throw new Error('No se pudo cargar la página de importación (HTTP ' + csrfResp.status + ').');
         const html = await csrfResp.text();
         const tokenTag = html.match(/<input[^>]*\bname=["']csrf_token["'][^>]*>/i);
@@ -2589,7 +2809,7 @@
         fd.append('submit', '');
         if (csrf) fd.append('csrf_token', csrf);
 
-        const resp = await fetch(importPostUrl, { method: 'POST', credentials: 'same-origin', body: fd });
+        const resp = await doFetch(importPostUrl, { method: 'POST', body: fd }, 90000, 'subir el archivo');
         if (!resp.ok) throw new Error('El servidor respondió HTTP ' + resp.status + '.');
         const text = await resp.text();
 
@@ -2681,8 +2901,10 @@
 
     // Consulta el editor de key de un quiz para saber si tiene respuestas cargadas.
     async function fetchQuizKeyStatus(quizId, diagnose) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
         try {
-            const resp = await fetch(`/quiz/${quizId}/edit/key/0/?subjectGuid=all`, { credentials: 'same-origin' });
+            const resp = await fetch(`/quiz/${quizId}/edit/key/0/?subjectGuid=all`, { credentials: 'same-origin', signal: controller.signal });
             if (!resp.ok) {
                 if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ': HTTP ' + resp.status);
                 return null;
@@ -2712,6 +2934,8 @@
             if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ' error:', e);
             console.warn('⚠️ [ZipGrade] No se pudo verificar la key del quiz ' + quizId + ':', e);
             return null;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -2730,6 +2954,23 @@
             el.style.color = '#94a3b8';
             el.title = 'No se pudo verificar la key';
         }
+    }
+
+    // Muestra un estado temporal de error en la celda Key y luego restaura el
+    // estado anterior para que el badge no quede pegado en "Subiendo...".
+    function showKeyUploadError(el, message) {
+        const prevText = el.dataset.zgPrevText || '';
+        const prevColor = el.dataset.zgPrevColor || '';
+        const prevTitle = el.dataset.zgPrevTitle || '';
+        el.textContent = '✘ Error al subir';
+        el.style.color = '#ef4444';
+        el.title = message || 'No se pudo subir el archivo. Inténtalo de nuevo.';
+        setTimeout(() => {
+            if (el.textContent !== '✘ Error al subir') return;
+            el.textContent = prevText || '?';
+            el.style.color = prevColor || '#94a3b8';
+            el.title = prevTitle || 'No se pudo verificar la key';
+        }, 8000);
     }
 
     // Columna "Key" en /quizzes/: subir las key answers (respuestas correctas) en CSV por quiz
@@ -2767,7 +3008,7 @@
 
             td.innerHTML = `
                 <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                    <button type="button" class="zg-btn-quiz-key btn btn-default btn-xs" style="padding:3px 8px;" title="Subir key answers (CSV) o arrastrar el archivo aquí">
+                    <button type="button" class="zg-btn-quiz-key zg-btn zg-btn-sm" title="Subir key answers (CSV) o arrastrar el archivo aquí">
                         <i class="fa fa-upload"></i> Key
                     </button>
                     <input type="file" class="zg-key-file" accept=".csv,text/csv" style="display:none;" />
@@ -2792,6 +3033,10 @@
                 uploading = true;
                 btn.disabled = true;
                 btn.style.opacity = '0.5';
+                // Guardar el estado previo para poder restaurarlo si falla la subida.
+                statusEl.dataset.zgPrevText = statusEl.textContent;
+                statusEl.dataset.zgPrevColor = statusEl.style.color;
+                statusEl.dataset.zgPrevTitle = statusEl.title;
                 statusEl.textContent = 'Subiendo ' + file.name + '...';
                 statusEl.style.color = '#2563eb';
                 try {
@@ -2800,13 +3045,13 @@
                         renderKeyStatus(statusEl, true);
                         showZgToast('✔ Claves importadas correctamente desde ' + file.name + '.', 'success');
                     } else {
-                        const errMsg = cleanKeyFlashMsg(result.message);
-                        statusEl.title = errMsg;
+                        const errMsg = cleanKeyFlashMsg(result.message) || 'Error desconocido al importar las claves.';
+                        showKeyUploadError(statusEl, errMsg);
                         showZgToast('✘ ' + errMsg, 'error');
                     }
                 } catch (err) {
                     const errMsg = err.message || 'Error desconocido';
-                    statusEl.title = errMsg;
+                    showKeyUploadError(statusEl, errMsg);
                     showZgToast('✘ ' + errMsg, 'error');
                 } finally {
                     uploading = false;
@@ -2955,8 +3200,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-copy-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-copy-accept" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-copy"></i> Copiar</button>
+                <button id="zg-copy-cancel" type="button" class="zg-btn">Cancelar</button>
+                <button id="zg-copy-accept" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-copy"></i> Copiar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -2979,7 +3224,7 @@
                             <input type="checkbox" class="zg-copy-slot-auto-next" style="margin:0; accent-color:#7c3aed; cursor:pointer;" />
                             &#10024; Auto-siguiente
                         </label>
-                        <button type="button" class="zg-copy-slot-remove btn btn-default btn-xs" style="padding:1px 7px; font-size:11px; border-radius:4px;" title="Quitar esta copia">✕</button>
+                        <button type="button" class="zg-copy-slot-remove zg-btn zg-btn-sm zg-btn-icon" title="Quitar esta copia">✕</button>
                     </div>
                 </div>
                 <input type="text" class="zg-copy-slot-name" value="${escapeHtml(nameValue)}" placeholder="Nombre de la copia" style="width:100%; box-sizing:border-box; padding:5px 8px; font-size:12px; border:1px solid #cbd5e1; border-radius:6px;" />
@@ -3367,7 +3612,7 @@
                 <select id="zg-bulk-copy-apply-all" disabled style="flex:1; min-width:140px; padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff;">
                     <option value="">Cargando clases...</option>
                 </select>
-                <button id="zg-bulk-auto-next-all" type="button" disabled class="btn btn-default btn-xs" style="white-space:nowrap; border-radius:6px; font-size:11px; color:#7c3aed; border-color:#c4b5fd; font-weight:600;">&#10024; Auto-sig. a todos</button>
+                <button id="zg-bulk-auto-next-all" type="button" disabled class="zg-btn zg-btn-sm zg-btn-soft-violet" style="white-space:nowrap;">&#10024; Auto-sig. a todos</button>
             </div>
             <div id="zg-bulk-copy-rows" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; min-height:0;"></div>
             <div id="zg-bulk-copy-progress" style="display:none; flex-direction:column; gap:4px; margin-top:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; flex-shrink:0;">
@@ -3380,8 +3625,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-shrink:0;">
-                <button id="zg-bulk-copy-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-bulk-copy-accept" type="button" class="btn btn-primary btn-sm" disabled style="border-radius:6px; opacity:0.5;"><i class="fa fa-copy"></i> Copiar</button>
+                <button id="zg-bulk-copy-cancel" type="button" class="zg-btn">Cancelar</button>
+                <button id="zg-bulk-copy-accept" type="button" class="zg-btn zg-btn-primary" disabled><i class="fa fa-copy"></i> Copiar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -3774,16 +4019,16 @@
             <div style="display:flex; flex-direction:column; gap:12px;">
                 <div>
                     <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Nombre del quiz</label>
-                    <input id="zg-edit-name-input" type="text" class="form-control" value="${escapeHtml(quizName)}" style="width:100%; box-sizing:border-box;" />
+                    <input id="zg-edit-name-input" type="text" class="zg-input" value="${escapeHtml(quizName)}" style="width:100%; box-sizing:border-box;" />
                 </div>
                 <div style="display:flex; gap:12px;">
                     <div style="flex:1.4;">
                         <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Plantilla (Answer Sheet)</label>
-                        <select id="zg-edit-answer-sheet" class="form-control" style="width:100%; box-sizing:border-box;"></select>
+                        <select id="zg-edit-answer-sheet" class="zg-select" style="width:100%; box-sizing:border-box;"></select>
                     </div>
                     <div style="flex:1;">
                         <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Carpeta</label>
-                        <select id="zg-edit-folder" class="form-control" style="width:100%; box-sizing:border-box;"></select>
+                        <select id="zg-edit-folder" class="zg-select" style="width:100%; box-sizing:border-box;"></select>
                     </div>
                 </div>
                 <div>
@@ -3802,8 +4047,8 @@
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-edit-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                <button id="zg-edit-save" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-save"></i> Guardar</button>
+                <button id="zg-edit-cancel" type="button" class="zg-btn">Cancelar</button>
+                <button id="zg-edit-save" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-save"></i> Guardar</button>
             </div>
         `;
         overlay.appendChild(modal);
@@ -4202,8 +4447,7 @@
             // Botón de descarga individual a la DERECHA del selector (mismo orden que /classes/)
             const dlBtn = document.createElement('button');
             dlBtn.type = 'button';
-            dlBtn.className = 'zg-btn-quiz-download btn btn-default btn-xs';
-            dlBtn.style.cssText = 'padding:3px 8px;';
+            dlBtn.className = 'zg-btn-quiz-download zg-btn zg-btn-sm zg-btn-icon';
             dlBtn.title = 'Descargar resultados de este quiz (formato personalizado)';
             dlBtn.innerHTML = '<i class="fa fa-cloud-download" style="color:#2563eb;"></i>';
             cellDiv.appendChild(dlBtn);
@@ -5030,8 +5274,8 @@
                     </div>
                 </div>
                 <div style="display:flex; justify-content:flex-end; gap:8px;">
-                    <button id="zg-export-cancel" type="button" class="btn btn-default btn-sm" style="border-radius:6px;">Cancelar</button>
-                    <button id="zg-export-accept" type="button" class="btn btn-primary btn-sm" style="border-radius:6px;"><i class="fa fa-download"></i> Descargar</button>
+                    <button id="zg-export-cancel" type="button" class="zg-btn">Cancelar</button>
+                    <button id="zg-export-accept" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-download"></i> Descargar</button>
                 </div>
             `;
             overlay.appendChild(modal);
@@ -5553,7 +5797,7 @@
                     </span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <button id="zg-btn-refresh-novelties" type="button" class="btn btn-primary btn-sm" style="font-size:12px; font-weight:600; border-radius:6px; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2);">
+                    <button id="zg-btn-refresh-novelties" type="button" class="zg-btn zg-btn-primary">
                         <i class="fa fa-refresh"></i> Actualizar
                     </button>
                 </div>
@@ -5788,7 +6032,7 @@
 
                     if (isAlien || isDuplicate) {
                         const reason = isDuplicate
-                            ? `Doble vez (escaneado ${occurrenceCount} veces)`
+                            ? `Hoja escaneada ${occurrenceCount} veces`
                             : `No pertenece a la lista oficial de ${displayClassName}`;
                         
                         const actualClass = isDuplicate
@@ -5919,7 +6163,7 @@
                     tableContainer.innerHTML = '';
                 } else {
                     const copyBtnHtml = noveltiesList.length > 0 ? `
-                        <button id="zg-copy-novelties-btn" type="button" class="btn btn-default btn-xs" style="border-radius:6px; font-weight:600; color:#991b1b; border-color:#fca5a5; background:#fff5f5;">
+                        <button id="zg-copy-novelties-btn" type="button" class="zg-btn zg-btn-sm zg-btn-soft-danger">
                             <i class="fa fa-clipboard"></i> Copiar novedades (${noveltiesList.length})
                         </button>
                     ` : '';
@@ -5984,11 +6228,23 @@
                         const copyBtn = container.querySelector('#zg-copy-novelties-btn');
                         if (copyBtn) {
                             copyBtn.addEventListener('click', () => {
+                                const total = noveltiesList.length;
+                                const missingLabel = missingStudents.length === 1 ? 'faltante' : 'faltantes';
+                                const anomalyLabel = anomalies.length === 1 ? 'sobrante' : 'sobrantes';
                                 const lines = [
-                                    `📋 NOVEDADES DEL QUIZ - Curso: ${displayClassName} (${noveltiesList.length} novedades)`,
-                                    `   Resumen: ${missingStudents.length} faltante(s) | ${anomalies.length} sobrante(s)`,
-                                    `--------------------------------------------------`,
-                                    ...noveltiesList.map((item, i) => `${i + 1}. [ID: ${item.id}] ${item.name} (${item.className}) - ESTADO: ${item.type} - NOVEDAD: ${item.reason}`)
+                                    `📋 NOVEDADES DEL QUIZ — Curso: ${displayClassName} (${total} ${total === 1 ? 'novedad' : 'novedades'})`,
+                                    `Resumen: ${missingStudents.length} ${missingLabel} · ${anomalies.length} ${anomalyLabel}`,
+                                    '────────────────────────────',
+                                    ...noveltiesList.map((item, i) => {
+                                        const icon = item.type === 'FALTA'
+                                            ? '❌'
+                                            : (item.type.includes('Doble') ? '🔁' : '⚠️');
+                                        const classPart = (item.className && item.className !== displayClassName && item.className !== 'Ajeno')
+                                            ? ` · Curso ${item.className}`
+                                            : '';
+                                        const idPart = item.id && item.id !== '-' ? ` · ID ${item.id}` : '';
+                                        return `${i + 1}. ${icon} ${item.name}${idPart}${classPart}\n   ${item.reason}`;
+                                    })
                                 ];
                                 const textToCopy = lines.join('\n');
                                 navigator.clipboard.writeText(textToCopy).then(() => {
@@ -6645,7 +6901,7 @@
         // Botón volver
         const backBtn = document.querySelector('a[href*="/quiz/"][href$="/all/"]');
         if (backBtn && backBtn.innerText.includes('Back to Quiz')) {
-            backBtn.innerHTML = '<span class="glyphicon glyphicon-chevron-left" aria-hidden="true"></span> Volver al Quiz';
+            backBtn.innerHTML = '<i class="fa fa-chevron-left" aria-hidden="true"></i> Volver al Quiz';
         }
 
         // Título "Quiz:"
@@ -7142,10 +7398,10 @@
                 </span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <button id="zg-edit-resp-annul-all" type="button" class="btn btn-danger btn-sm" style="font-weight:600;">
+                <button id="zg-edit-resp-annul-all" type="button" class="zg-btn zg-btn-danger">
                     <i class="fa fa-ban"></i> Anular todas
                 </button>
-                <button id="zg-edit-resp-restore" type="button" class="btn btn-default btn-sm" style="font-weight:600; display:none;">
+                <button id="zg-edit-resp-restore" type="button" class="zg-btn" style="display:none;">
                     <i class="fa fa-undo"></i> Restaurar
                 </button>
             </div>
@@ -7156,7 +7412,7 @@
                 </div>
                 <div id="zg-edit-resp-tags-list" style="display:flex; flex-wrap:wrap; gap:6px; max-height:140px; overflow-y:auto;"></div>
                 <div>
-                    <button id="zg-edit-resp-annul-tags" type="button" class="btn btn-warning btn-sm" style="font-weight:600;" disabled>
+                    <button id="zg-edit-resp-annul-tags" type="button" class="zg-btn zg-btn-warning" disabled>
                         <i class="fa fa-tags"></i> Anular preguntas de los tags seleccionados
                     </button>
                 </div>
@@ -7256,44 +7512,48 @@
                 `;
                 topBar.innerHTML = `
                     <!-- Fila 1: Controles de Selección y Asignación -->
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px;">
-                                <i class="fa fa-cogs"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
+                    <div class="zg-toolbar-row" style="border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
+                        <div class="zg-toolbar-group">
+                            <span style="font-weight:700; font-size:14px; color:#1e293b; display:flex; align-items:center; gap:6px; margin-right:4px;">
+                                <i class="fa fa-cogs" style="color:#2563eb;"></i> ZipGrade Toolkit <small style="font-size:11px; font-weight:normal; color:#64748b;">v${SCRIPT_VERSION}</small>
                             </span>
-                            <button id="zg-btn-select-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <button id="zg-btn-select-all" type="button" class="zg-btn zg-btn-sm">
                                 <i class="fa fa-check-square-o"></i> Seleccionar Todo
                             </button>
-                            <button id="zg-btn-deselect-all" type="button" class="btn btn-default btn-xs" style="font-size:11px; font-weight:600; border-radius:4px;">
+                            <button id="zg-btn-deselect-all" type="button" class="zg-btn zg-btn-sm">
                                 <i class="fa fa-square-o"></i> Deseleccionar Todo
                             </button>
                         </div>
 
-                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                            <div style="display:flex; align-items:center; gap:6px;">
-                                <label style="font-weight:600; font-size:12px; color:#334155; margin:0;">Sesión:</label>
-                                <select id="zg-global-session" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; outline:none; background:#fff; cursor:pointer;">
+                        <div class="zg-toolbar-group" style="gap:10px;">
+                            <div class="zg-toolbar-group" style="gap:6px;">
+                                <label class="zg-field-label" for="zg-global-session">Sesión:</label>
+                                <select id="zg-global-session" class="zg-select">
                                     <option value="S1">S1</option>
                                     <option value="S2">S2</option>
                                 </select>
                             </div>
 
-                            <div style="display:flex; align-items:center; gap:6px; border-left: 1px solid #e2e8f0; padding-left:12px;">
-                                <label style="font-weight:600; font-size:12px; color:#334155; margin:0;">Asignación Masiva:</label>
-                                <select id="zg-bulk-apply-sheet" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; outline:none; background:#fff; max-width:180px; cursor:pointer;">
+                            <span class="zg-divider-v"></span>
+
+                            <div class="zg-toolbar-group" style="gap:6px;">
+                                <label class="zg-field-label" for="zg-bulk-apply-sheet">Asignación Masiva:</label>
+                                <select id="zg-bulk-apply-sheet" class="zg-select" style="max-width:190px;">
                                     <option value="">-- Seleccionar Hoja --</option>
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
                                 </select>
-                                <button id="zg-btn-apply-checked" type="button" class="btn btn-primary btn-xs" style="font-size:11px; font-weight:600; border-radius:4px; padding:4px 10px;">
+                                <button id="zg-btn-apply-checked" type="button" class="zg-btn zg-btn-sm zg-btn-primary">
                                     <i class="fa fa-check"></i> Aplicar a Marcados
                                 </button>
                             </div>
 
-                            <div style="display:flex; align-items:center; gap:6px; border-left: 1px solid #e2e8f0; padding-left:12px;">
-                                <button id="zg-btn-export-json" type="button" class="btn btn-default btn-xs" style="font-size:11px; border-radius:4px;" title="Exportar asignaciones a JSON">
+                            <span class="zg-divider-v"></span>
+
+                            <div class="zg-toolbar-group" style="gap:6px;">
+                                <button id="zg-btn-export-json" type="button" class="zg-btn zg-btn-sm" title="Exportar asignaciones a JSON">
                                     <i class="fa fa-upload"></i> Exportar Config
                                 </button>
-                                <label id="zg-label-import-json" class="btn btn-default btn-xs" style="font-size:11px; margin:0; cursor:pointer; font-weight:normal; border-radius:4px;" title="Cargar asignaciones desde JSON">
+                                <label id="zg-label-import-json" class="zg-btn zg-btn-sm" style="margin:0;" title="Cargar asignaciones desde JSON">
                                     <i class="fa fa-download"></i> Importar Config
                                     <input type="file" id="zg-file-input" accept=".json" style="display:none;" />
                                 </label>
@@ -7302,12 +7562,12 @@
                     </div>
 
                     <!-- Fila 2: Acciones Principales y Botón Detener -->
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <button id="zg-btn-download-selected" type="button" style="background:#2563eb; color:#ffffff; border:none; padding:8px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(37,99,235,0.2); transition:all 0.2s;">
+                    <div class="zg-toolbar-row">
+                        <div class="zg-toolbar-group" style="gap:10px;">
+                            <button id="zg-btn-download-selected" type="button" class="zg-btn zg-btn-lg zg-btn-primary">
                                 <i class="fa fa-download"></i> Descargar PDFs
                             </button>
-                            <button id="zg-btn-stop-download" type="button" style="display:none; background:#ef4444; color:#ffffff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">
+                            <button id="zg-btn-stop-download" type="button" class="zg-btn zg-btn-sm zg-btn-danger" style="display:none;">
                                 <i class="fa fa-stop-circle"></i> Detener
                             </button>
                         </div>
@@ -7361,12 +7621,12 @@
 
                         td.innerHTML = `
                             <div style="display:inline-flex; gap:6px; align-items:center; justify-content:center;">
-                                <select class="zg-row-sheet" data-class-id="${classId}" data-class-name="${className}" style="padding:4px 6px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; max-width:160px; background:#fff; cursor:pointer;">
+                                <select class="zg-row-sheet zg-select" data-class-id="${classId}" data-class-name="${className}" style="max-width:160px; font-size:11px; padding:5px 26px 5px 8px;">
                                     <option value="">-- Seleccionar --</option>
                                     ${availableSheets.map(s => `<option value="${s}">${s}</option>`).join('')}
                                 </select>
-                                <button type="button" class="zg-btn-row-download btn btn-default btn-xs" style="padding:3px 8px;" title="Descargar PDF individual">
-                                    <span class="glyphicon glyphicon-download-alt"></span>
+                                <button type="button" class="zg-btn-row-download zg-btn zg-btn-sm zg-btn-icon" title="Descargar PDF individual">
+                                    <i class="fa fa-cloud-download" style="color:#2563eb;"></i>
                                 </button>
                             </div>
                         `;
@@ -7661,7 +7921,7 @@
         btnDownload.disabled = true;
 
         if (btnStop) {
-            btnStop.style.display = 'inline-block';
+            btnStop.style.display = 'inline-flex';
             btnStop.disabled = false;
             btnStop.innerHTML = '<i class="fa fa-stop"></i> Detener';
         }
