@@ -48,7 +48,7 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 
 ### 6. 📥 Descarga Personalizada de Resultados
 - Detecta automáticamente los *Export Formats* personalizados del quiz: si solo existe uno, lo usa por defecto; si hay varios, muestra un selector con opción Excel/CSV.
-- El archivo se guarda renombrado como `Resultados_<nombre del quiz hasta la sesión>` (ej: `Resultados_Template E.S.A. _ 10_ - 11_ _ P3 _ S2.xlsx`).
+- El archivo se guarda renombrado como `Resultados - <nombre del quiz hasta la sesión>` (ej: `Resultados - Template E.S.A. - 10° - 11° - P3 - S2.xlsx`).
 
 ### 7. 📋 Columnas "Estado" y "Descarga Rápida" en `/quizzes/`
 - **Estado**: muestra `escaneados/total (%)` por quiz — los papers calificados vs. el total de estudiantes de su clase, con código de color (rojo/ámbar/verde). El total se toma de `/classes/` (si la clase tiene estudiantes asignados se usa directamente; si es un rango de ordenación como `10° - 11°` con 0, suma automáticamente los estudiantes de sus clases reales `10-1`, `10-2`, `11-1`, `11-2`). La celda se inserta de forma síncrona para que nunca quede desalineada con "Descarga Rápida" al cargar la página.
@@ -56,7 +56,7 @@ Haz clic en el siguiente botón para instalar directamente en Violentmonkey con 
 - **Apertura rápida de modales**: el HTML de las páginas `/all/` y de edición que la columna Estado ya descarga en segundo plano se reutiliza en memoria (TTL 5 min) al abrir **Copiar/Editar**, por lo que los modales abren casi al instante sin volver a descargar.
 - **Descarga Rápida**: checkbox + **selector de formato personalizado** (preseleccionado y bloqueado si solo hay uno) + botón de descarga individual.
 - Card "ZipGrade Toolkit" con Seleccionar Todo, Modo de Orden (incluida la dirección de la fecha), botón **"Descargar Resultados"** en lote con barra de progreso y banner.
-- Cada archivo se renombra automáticamente como `Resultados_<nombre hasta sesión>`.
+- Cada archivo se renombra automáticamente como `Resultados - <nombre hasta sesión>`.
 
 ### 8. 📅 Formato de fecha en detalle del quiz y copia de quizzes
 - En `/quiz/.../all/`, la fecha `September 16, 2026` se muestra como `Miércoles 16/SEP/2026`.

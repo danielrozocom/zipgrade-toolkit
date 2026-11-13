@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.0
+// @version      31.1
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -4803,7 +4803,7 @@
         return name.trim();
     }
 
-    // Construye "Res - <nombre>" a partir del nombre del quiz (con el ° real), del <title>
+    // Construye "Resultados - <nombre>" a partir del nombre del quiz (con el ° real), del <title>
     // de la página del quiz o del filename del servidor. Los separadores (|, _) se
     // convierten en " - " (guión); el ° se conserva porque Windows lo soporta.
     function buildResultsFilename(serverFilename, pageTitle, quizName, extension) {
@@ -4817,7 +4817,7 @@
         }
         base = truncateNameToSession(base);
         base = cleanResultsBaseName(base);
-        return `Res - ${base}.${extension}`;
+        return `Resultados - ${base}.${extension}`;
     }
 
     // Limpieza del nombre de archivo: separadores (|, _) -> " - ", caracteres
@@ -4825,7 +4825,7 @@
     // El ° (U+00B0) se conserva tal cual: Windows lo soporta en nombres de archivo.
     function cleanResultsBaseName(name) {
         return String(name || '')
-            .replace(/^(?:Resultados|Res)[_-]/i, '') // evitar "Res_Res..." / "Resultados_..."
+            .replace(/^(?:Resultados|Res)\s*[-_]\s*/i, '') // evitar "Resultados - Resultados..." / "Res_Res..."
             .replace(/[|_]+/g, ' - ')                // separadores -> guión
             .replace(/[\\/:*?"<>]+/g, ' ')           // inválidos de Windows -> espacio
             .replace(/\s*-\s*-+\s*/g, ' - ')         // colapsar guiones consecutivos
@@ -4878,7 +4878,7 @@
         return formats;
     }
 
-    // Descarga un formato personalizado y lo guarda con el nombre "Res - ..."
+    // Descarga un formato personalizado y lo guarda con el nombre "Resultados - ..."
     async function downloadCustomExport(format, preferType, quizName) {
         const url = (preferType === 'CSV' ? (format.csv || format.xlsx) : (format.xlsx || format.csv));
         if (!url) throw new Error('Este formato no tiene enlace de descarga disponible.');
