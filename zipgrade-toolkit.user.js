@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.6
+// @version      31.7
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -5182,6 +5182,39 @@
         return result;
     }
 
+    // Nombre completo del quiz en la página de detalle (fila "Name:" de la tabla
+    // de detalles, encabezado o <title>). Devuelve '' si no se puede determinar.
+    function getQuizNameFromDetailPage(root) {
+        const scope = root || document;
+
+        // La tabla de detalles del quiz es la que contiene la fila "Date:" / "Fecha:"
+        let detailTable = null;
+        scope.querySelectorAll('td').forEach(td => {
+            if (!detailTable && /^(?:date|fecha):?$/i.test(td.innerText.trim())) {
+                detailTable = td.closest('table');
+            }
+        });
+
+        const tds = Array.from((detailTable || scope).querySelectorAll('td'));
+        for (const td of tds) {
+            if (/^(?:name|nombre|quiz\s*name|nombre\s*del\s*quiz):?$/i.test(td.innerText.trim())) {
+                const valTd = td.nextElementSibling;
+                const name = valTd ? valTd.innerText.trim() : '';
+                if (name && name !== '-') return name;
+            }
+        }
+
+        // Fallback: encabezado de la página
+        const heading = scope.querySelector('h1, h2');
+        if (heading) {
+            const txt = heading.innerText.trim();
+            if (txt && !/^zipgrade$/i.test(txt)) return txt;
+        }
+
+        const title = (document.title || '').replace(/\s*[-–|]\s*ZipGrade.*$/i, '').trim();
+        return /^zipgrade$/i.test(title) ? '' : title;
+    }
+
     // Extrae el token de grado/clase del nombre de un quiz ("Template E.S.A. | 3° | P3 | S1" -> "3°" o "E.S.A. | 601 | P3 | S1" -> "601")
     function extractGradeFromQuizName(nameVal) {
         if (!nameVal) return '';
@@ -5618,12 +5651,13 @@
 
     // Construye el texto plano que se copia al portapapeles. Función pura (sin DOM)
     // para poder probarse y mantener el handler del botón libre de lógica de formato.
-    function buildNoveltiesReport(displayClassName, noveltiesList, missingCount, anomalyCount) {
+    function buildNoveltiesReport(displayClassName, noveltiesList, missingCount, anomalyCount, quizName) {
         const total = noveltiesList.length;
         const missingLabel = missingCount === 1 ? 'faltante' : 'faltantes';
         const anomalyLabel = anomalyCount === 1 ? 'sobrante' : 'sobrantes';
+        const quizPart = quizName ? ` — ${quizName}` : '';
         const lines = [
-            `📋 NOVEDADES DEL QUIZ — Curso: ${displayClassName} (${total} ${total === 1 ? 'novedad' : 'novedades'})`,
+            `📋 NOVEDADES DEL QUIZ${quizPart} — Curso: ${displayClassName} (${total} ${total === 1 ? 'novedad' : 'novedades'})`,
             `Resumen: ${missingCount} ${missingLabel} · ${anomalyCount} ${anomalyLabel}`,
             '────────────────────────────',
             ...noveltiesList.map((item, i) => {
@@ -5992,12 +6026,16 @@
         `;
 
         const initialDisplayName = detectedClasses.length > 0 ? detectedClasses.map(c => c.name).join(', ') : 'Curso';
+        const quizName = getQuizNameFromDetailPage();
+        const initialQuizNameHtml = quizName
+            ? `<span id="zg-quiz-badge-name" style="font-size:12px; font-weight:600; color:#475569;">— ${escapeHtml(quizName)}</span>`
+            : '';
 
         container.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <span id="zg-novelties-title" style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px;">
-                        <i class="fa fa-bell" style="color:#2563eb;"></i> Novedades <span id="zg-course-badge-name" style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(initialDisplayName)})</span>
+                    <span id="zg-novelties-title" style="font-weight:700; font-size:15px; color:#1e293b; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        <i class="fa fa-bell" style="color:#2563eb;"></i> Novedades ${initialQuizNameHtml} <span id="zg-course-badge-name" style="font-size:12px; font-weight:600; color:#64748b;">(${escapeHtml(initialDisplayName)})</span>
                     </span>
                     <span id="zg-novelties-badge" style="font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; background:#e0e7ff; color:#3730a3;">
                         <i class="fa fa-spinner fa-spin"></i> Analizando...
@@ -6441,7 +6479,8 @@
                                     displayClassName,
                                     noveltiesList,
                                     missingStudents.length,
-                                    anomalies.length
+                                    anomalies.length,
+                                    quizName
                                 );
                                 navigator.clipboard.writeText(textToCopy).then(() => {
                                     showZgToast(`Se copiaron ${noveltiesList.length} novedades al portapapeles.`, 'success');
