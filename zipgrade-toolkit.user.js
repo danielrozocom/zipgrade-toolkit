@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.1
+// @version      31.2
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -473,6 +473,113 @@
                 background: #fef3c7 !important;
                 border-color: #f59e0b !important;
                 box-shadow: 0 0 0 1px rgba(245,158,11,0.25) !important;
+            }
+            /* Controles de orden de /quizzes/: segmented control con el azul de la marca */
+            .zg-sort-label {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                color: #64748b;
+                margin-right: 2px;
+                white-space: nowrap;
+            }
+            .zg-sort-label i {
+                color: #94a3b8;
+                font-size: 12px;
+            }
+            .zg-sort-segmented {
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 2px !important;
+                background: #f1f5f9 !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 8px !important;
+                padding: 3px !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+            }
+            .zg-sort-segmented .zg-sort-btn {
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 6px !important;
+                margin: 0 !important;
+                padding: 6px 12px !important;
+                border: none !important;
+                border-radius: 6px !important;
+                background: transparent !important;
+                color: #64748b !important;
+                font-size: 12px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+                text-shadow: none !important;
+                box-shadow: none !important;
+                outline: none !important;
+                cursor: pointer;
+                transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+            }
+            .zg-sort-segmented .zg-sort-btn:hover {
+                background: rgba(255, 255, 255, 0.75) !important;
+                color: #334155 !important;
+            }
+            .zg-sort-segmented .zg-sort-btn.zg-sort-btn-active,
+            .zg-sort-segmented .zg-sort-btn.zg-sort-btn-active:hover {
+                background: #2563eb !important;
+                color: #ffffff !important;
+                box-shadow: 0 1px 4px rgba(37, 99, 235, 0.35) !important;
+            }
+            .zg-sort-segmented .zg-sort-btn i {
+                color: inherit !important;
+                font-size: 12px !important;
+            }
+            .zg-sort-divider {
+                width: 1px;
+                height: 22px;
+                background: #e2e8f0;
+                display: inline-block;
+                margin: 0 2px;
+            }
+            .zg-sort-dir {
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 6px !important;
+                margin: 0 !important;
+                padding: 7px 12px !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 8px !important;
+                background: #ffffff !important;
+                color: #475569 !important;
+                font-size: 12px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+                text-shadow: none !important;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+                outline: none !important;
+                cursor: pointer;
+                transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+            }
+            .zg-sort-dir i {
+                color: #94a3b8 !important;
+                font-size: 12px !important;
+                transition: color 0.15s ease;
+            }
+            .zg-sort-dir:hover {
+                background: #f8fafc !important;
+                border-color: #bfdbfe !important;
+                color: #2563eb !important;
+            }
+            .zg-sort-dir:hover i {
+                color: #2563eb !important;
+            }
+            .zg-sort-dir.zg-sort-dir-desc,
+            .zg-sort-dir.zg-sort-dir-desc:hover {
+                background: #eff6ff !important;
+                border-color: #bfdbfe !important;
+                color: #1d4ed8 !important;
+            }
+            .zg-sort-dir.zg-sort-dir-desc i {
+                color: #2563eb !important;
             }
          `;
         document.head.appendChild(style);
@@ -1373,8 +1480,7 @@
             btn = document.createElement('button');
             btn.id = 'zg-sort-dir-date';
             btn.type = 'button';
-            btn.className = 'btn btn-default btn-xs';
-            btn.style.cssText = 'font-weight:500; margin-left:4px;';
+            btn.className = 'zg-sort-dir';
             group.parentNode.insertBefore(btn, group.nextSibling);
             btn.dataset.zgBound = 'true';
             btn.addEventListener('click', handleQuizSortDirClick);
@@ -1382,6 +1488,7 @@
         const dir = getQuizSortDirection();
         const icon = dir === 'desc' ? 'fa-sort-amount-desc' : 'fa-sort-amount-asc';
         const label = dir === 'desc' ? 'Más recientes primero' : 'Más antiguas primero';
+        btn.className = dir === 'desc' ? 'zg-sort-dir zg-sort-dir-desc' : 'zg-sort-dir';
         btn.innerHTML = `<i class="fa ${icon}"></i> ${label}`;
         btn.title = dir === 'desc'
             ? 'Fecha: más reciente primero. Clic para ver las más antiguas primero.'
@@ -1428,17 +1535,18 @@
                             <i class="fa fa-square-o"></i> Deseleccionar Todo
                         </button>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                        <span style="font-weight:600; color:#475569; font-size:13px;"><i class="fa fa-sort"></i> Modo de Orden:</span>
-                        <div class="btn-group" id="zg-sort-mode-group" style="margin:0;">
-                            <button id="zg-sort-mode-date" type="button" class="btn btn-xs ${savedMode === 'date-class' ? 'btn-primary' : 'btn-default'}" style="font-weight:500;">
-                                <i class="fa fa-calendar"></i> Fecha > Curso
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <span class="zg-sort-label"><i class="fa fa-sort"></i> Ordenar por:</span>
+                        <div class="zg-sort-segmented" id="zg-sort-mode-group">
+                            <button id="zg-sort-mode-date" type="button" class="zg-sort-btn ${savedMode === 'date-class' ? 'zg-sort-btn-active' : ''}">
+                                <i class="fa fa-calendar"></i> Fecha &gt; Curso
                             </button>
-                            <button id="zg-sort-mode-class" type="button" class="btn btn-xs ${savedMode === 'class-date' ? 'btn-primary' : 'btn-default'}" style="font-weight:500;">
-                                <i class="fa fa-graduation-cap"></i> Curso > Fecha
+                            <button id="zg-sort-mode-class" type="button" class="zg-sort-btn ${savedMode === 'class-date' ? 'zg-sort-btn-active' : ''}">
+                                <i class="fa fa-graduation-cap"></i> Curso &gt; Fecha
                             </button>
                         </div>
-                        <button id="zg-sort-dir-date" type="button" class="btn btn-default btn-xs" style="font-weight:500; margin-left:4px;">
+                        <span class="zg-sort-divider"></span>
+                        <button id="zg-sort-dir-date" type="button" class="zg-sort-dir">
                             <i class="fa fa-sort-amount-asc"></i> Más antiguas primero
                         </button>
                     </div>
@@ -1496,6 +1604,13 @@
         const btnClass = document.getElementById('zg-sort-mode-class');
         const btnDate = document.getElementById('zg-sort-mode-date');
 
+        // Sincroniza las clases (también cubre recargas en caliente con el markup antiguo)
+        const syncSortModeUI = (mode) => {
+            if (btnDate) btnDate.className = 'zg-sort-btn' + (mode === 'date-class' ? ' zg-sort-btn-active' : '');
+            if (btnClass) btnClass.className = 'zg-sort-btn' + (mode === 'class-date' ? ' zg-sort-btn-active' : '');
+        };
+        syncSortModeUI(savedMode);
+
         // Botón de dirección de fecha (antiguas ↔ recientes)
         updateQuizSortDirButton();
         const btnSortDir = document.getElementById('zg-sort-dir-date');
@@ -1509,10 +1624,7 @@
             btnClass.addEventListener('click', (e) => {
                 e.preventDefault();
                 localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'class-date');
-                btnClass.classList.add('btn-primary');
-                btnClass.classList.remove('btn-default');
-                btnDate.classList.add('btn-default');
-                btnDate.classList.remove('btn-primary');
+                syncSortModeUI('class-date');
                 applyQuizzesSort();
             });
         }
@@ -1521,10 +1633,7 @@
             btnDate.addEventListener('click', (e) => {
                 e.preventDefault();
                 localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'date-class');
-                btnDate.classList.add('btn-primary');
-                btnDate.classList.remove('btn-default');
-                btnClass.classList.add('btn-default');
-                btnClass.classList.remove('btn-primary');
+                syncSortModeUI('date-class');
                 applyQuizzesSort();
             });
         }
