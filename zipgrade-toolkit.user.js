@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ZipGrade Toolkit
 // @namespace    http://tampermonkey.net/
-// @version      31.3
+// @version      31.5
 // @description  Empaqueta descargas en ZIP con selección de archivos nativa, gestión de timeouts, barra de progreso, descarga directa, recuperación automática de límites de velocidad y ordenación por grados y código en /classes/, /students/ y /quizzes/.
 // @icon         https://content.zipgrade.com/static/images/favicon.ico
 // @match        https://www.zipgrade.com/*
@@ -813,9 +813,129 @@
     injectSharedStyles();
 
     const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info?.script?.version) || (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '31.0';
+
+    // ==========================================
+    // 0. INFRAESTRUCTURA COMPARTIDA (storage + HTTP)
+    // ==========================================
+    // Claves centralizadas: evita literales dispersos y facilita migraciones.
+    const ZG_STORAGE_KEYS = {
+        mappings: 'zipgrade_toolkit_saved_mappings',
+        session: 'zipgrade_toolkit_session',
+        quizSortDir: 'zipgrade_toolkit_quiz_sort_dir',
+        quizSortMode: 'zipgrade_toolkit_quiz_sort_mode',
+        classes: 'zg_classes_cache',
+        classMap: 'zg_class_map',
+        allStudentsDir: 'zg_all_students_dir',
+        formatsPrefix: 'zg_formats_',
+        rosterPrefix: 'zg_roster_',
+        statusPrefix: 'zg_status_'
+    };
+
+    const zgStorage = {
+        get(key, fallback = null) {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw == null ? fallback : raw;
+            } catch (e) {
+                return fallback;
+            }
+        },
+        set(key, value) {
+            try {
+                localStorage.setItem(key, String(value));
+                return true;
+            } catch (e) {
+                return false;
+            }
+        },
+        remove(key) {
+            try {
+                localStorage.removeItem(key);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        },
+        getJSON(key, fallback = null) {
+            const raw = this.get(key, null);
+            if (raw == null) return fallback;
+            try {
+                return JSON.parse(raw);
+            } catch (e) {
+                return fallback;
+            }
+        },
+        setJSON(key, value) {
+            try {
+                return this.set(key, JSON.stringify(value));
+            } catch (e) {
+                return false;
+            }
+        },
+        getCached(key, ttlMs) {
+            const obj = this.getJSON(key, null);
+            if (obj && obj.ts && (Date.now() - obj.ts) < ttlMs) return obj.v;
+            return null;
+        },
+        setCached(key, value) {
+            return this.setJSON(key, { ts: Date.now(), v: value });
+        },
+        keys(prefix = '') {
+            const out = [];
+            try {
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key && key.indexOf(prefix) === 0) out.push(key);
+                }
+            } catch (e) { /* ignore */ }
+            return out;
+        }
+    };
+
+    // Normaliza headers de fetch (Headers) a string, igual que GM_xmlhttpRequest.
+    function zgHeadersToString(headers) {
+        if (!headers) return '';
+        if (typeof headers === 'string') return headers;
+        try {
+            let out = '';
+            headers.forEach((value, name) => { out += name + ': ' + value + '\r\n'; });
+            return out;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // Fetch con timeout y cookies same-origin, contrato uniforme para todo el script.
+    // Evita repetir AbortController + setTimeout en cada llamada.
+    async function zgFetch(url, options = {}, timeoutMs = 45000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal });
+        } catch (e) {
+            if (e && e.name === 'AbortError') {
+                const err = new Error(`Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s) al acceder a ${url}`);
+                err.name = 'AbortError';
+                throw err;
+            }
+            throw e;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // Ejecuta una inicialización de página cuando el DOM está listo (una sola vez).
+    function zgOnReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
     let availableSheets = [];
     let cancelDownloadRequested = false;
-    const STORAGE_KEY_MAPPINGS = 'zipgrade_toolkit_saved_mappings';
+    const STORAGE_KEY_MAPPINGS = ZG_STORAGE_KEYS.mappings;
     let hasSortedQuizzesInitially = false;
 
     // TTL de caché para no refetchear en cada recarga de /quizzes/
@@ -824,23 +944,11 @@
     const ZG_FORMATS_CACHE_TTL_MS = 60 * 60 * 1000;     // formatos de exportación por quiz (Descarga Rápida)
 
     function zgCacheGet(key, ttlMs) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (!raw) return null;
-            const obj = JSON.parse(raw);
-            if (obj && obj.ts && (Date.now() - obj.ts) < ttlMs) return obj.v;
-            return null;
-        } catch (e) {
-            return null;
-        }
+        return zgStorage.getCached(key, ttlMs);
     }
 
     function zgCacheSet(key, value) {
-        try {
-            localStorage.setItem(key, JSON.stringify({ ts: Date.now(), v: value }));
-        } catch (e) {
-            /* ignore */
-        }
+        zgStorage.setCached(key, value);
     }
 
     // Caché en memoria del HTML de páginas pesadas (/all/ y /edit/): la columna Estado
@@ -869,26 +977,16 @@
     // Caché GLOBAL de la lista de clases (roster): es la misma para todos los quizzes y
     // rara vez cambia, así que se guarda 24 h en localStorage y los modales no la vuelven
     // a pedir (evita descargar la página /edit/ pesada por cada modal abierto).
-    const ZG_CLASSES_CACHE_KEY = 'zg_classes_cache';
+    const ZG_CLASSES_CACHE_KEY = ZG_STORAGE_KEYS.classes;
     const ZG_CLASSES_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
     function zgClassesGet() {
-        try {
-            const raw = localStorage.getItem(ZG_CLASSES_CACHE_KEY);
-            if (!raw) return null;
-            const o = JSON.parse(raw);
-            if (o && o.ts && (Date.now() - o.ts) < ZG_CLASSES_CACHE_TTL_MS) return o.v;
-            return null;
-        } catch (e) {
-            return null;
-        }
+        return zgStorage.getCached(ZG_CLASSES_CACHE_KEY, ZG_CLASSES_CACHE_TTL_MS);
     }
 
     function zgClassesSet(items) {
         if (!Array.isArray(items) || items.length === 0) return;
-        try {
-            localStorage.setItem(ZG_CLASSES_CACHE_KEY, JSON.stringify({ ts: Date.now(), v: items }));
-        } catch (e) { /* ignore */ }
+        zgStorage.setCached(ZG_CLASSES_CACHE_KEY, items);
     }
 
     // Extrae la lista de clases de una página /edit/ (li > input[name="classList"] + label)
@@ -1029,7 +1127,29 @@
     // ==========================================
     // 3. HELPER DE PETICIÓN HÍBRIDA CON TIMEOUT AMPLIADO Y NORMALIZACIÓN DE BLOBS
     // ==========================================
+    // Transporte único: GM_xmlhttpRequest si está disponible (evita CORS/timeouts raros),
+    // con fallback a fetch. Ambas rutas devuelven el MISMO contrato:
+    // { ok, status, headers, responseText, response }.
     function customRequest(options, timeoutMs = 45000) {
+        if (typeof GM_xmlhttpRequest === 'undefined') {
+            return zgFetch(options.url, {
+                method: options.method || 'GET',
+                headers: options.headers || {},
+                body: options.data
+            }, timeoutMs).then(async (res) => {
+                const response = options.responseType === 'blob'
+                    ? await res.blob()
+                    : await res.text();
+                return {
+                    ok: res.ok,
+                    status: res.status,
+                    headers: zgHeadersToString(res.headers),
+                    responseText: typeof response === 'string' ? response : '',
+                    response
+                };
+            });
+        }
+
         return new Promise((resolve, reject) => {
             let isSettled = false;
             let timer = setTimeout(() => {
@@ -1043,76 +1163,46 @@
                 if (timer) clearTimeout(timer);
             };
 
-            if (typeof GM_xmlhttpRequest !== 'undefined') {
-                GM_xmlhttpRequest({
-                    anonymous: false,
-                    ...options,
-                    timeout: timeoutMs,
-                    onload: (res) => {
-                        if (isSettled) return;
-                        isSettled = true;
-                        cleanup();
-
-                        let resp = res.response;
-
-                        // Normalización si se solicitó un blob pero regresó como ArrayBuffer o String
-                        if (options.responseType === 'blob' && !(resp instanceof Blob)) {
-                            if (resp instanceof ArrayBuffer) {
-                                const contentType = res.responseHeaders?.match(/content-type:\s*([^\s;]+)/i)?.[1] || 'application/pdf';
-                                resp = new Blob([resp], { type: contentType });
-                            }
-                        }
-
-                        resolve({
-                            status: res.status,
-                            responseText: res.responseText || '',
-                            response: resp,
-                            headers: res.responseHeaders
-                        });
-                    },
-                    onerror: (err) => {
-                        if (isSettled) return;
-                        isSettled = true;
-                        cleanup();
-                        reject(err || new Error("Error en la conexión HTTP"));
-                    },
-                    ontimeout: () => {
-                        if (isSettled) return;
-                        isSettled = true;
-                        cleanup();
-                        reject(new Error(`Timeout en GM_xmlhttpRequest (${Math.round(timeoutMs / 1000)}s)`));
-                    }
-                });
-            } else {
-                fetch(options.url, {
-                    method: options.method || 'GET',
-                    headers: options.headers || {},
-                    body: options.data,
-                    credentials: 'include'
-                }).then(async (res) => {
+            GM_xmlhttpRequest({
+                anonymous: false,
+                ...options,
+                timeout: timeoutMs,
+                onload: (res) => {
                     if (isSettled) return;
                     isSettled = true;
                     cleanup();
 
-                    let body;
-                    if (options.responseType === 'blob') {
-                        body = await res.blob();
-                    } else {
-                        body = await res.text();
+                    let resp = res.response;
+
+                    // Normalización si se solicitó un blob pero regresó como ArrayBuffer o String
+                    if (options.responseType === 'blob' && !(resp instanceof Blob)) {
+                        if (resp instanceof ArrayBuffer) {
+                            const contentType = res.responseHeaders?.match(/content-type:\s*([^\s;]+)/i)?.[1] || 'application/pdf';
+                            resp = new Blob([resp], { type: contentType });
+                        }
                     }
 
                     resolve({
+                        ok: res.status >= 200 && res.status < 300,
                         status: res.status,
-                        responseText: typeof body === 'string' ? body : '',
-                        response: body
+                        responseText: res.responseText || '',
+                        response: resp,
+                        headers: res.responseHeaders || ''
                     });
-                }).catch(err => {
+                },
+                onerror: (err) => {
                     if (isSettled) return;
                     isSettled = true;
                     cleanup();
-                    reject(err);
-                });
-            }
+                    reject(err || new Error("Error en la conexión HTTP"));
+                },
+                ontimeout: () => {
+                    if (isSettled) return;
+                    isSettled = true;
+                    cleanup();
+                    reject(new Error(`Timeout en GM_xmlhttpRequest (${Math.round(timeoutMs / 1000)}s)`));
+                }
+            });
         });
     }
 
@@ -1161,7 +1251,7 @@
             selects.forEach(s => {
                 if (s.value) mappings[s.dataset.className] = s.value;
             });
-            localStorage.setItem(getStorageKey(), JSON.stringify(mappings));
+            zgStorage.setJSON(getStorageKey(), mappings);
         } catch (e) {
             console.warn("No se pudo guardar la configuración en localStorage", e);
         }
@@ -1174,12 +1264,11 @@
             const allSelects = document.querySelectorAll('.zg-row-sheet');
             allSelects.forEach(s => s.value = '');
 
-            const raw = localStorage.getItem(getStorageKey());
-            if (!raw) {
+            const mappings = zgStorage.getJSON(getStorageKey(), null);
+            if (!mappings) {
                 updateSelectedCounter();
                 return;
             }
-            const mappings = JSON.parse(raw);
             const selects = Array.from(document.querySelectorAll('.zg-row-sheet'));
             selects.forEach(s => {
                 const name = s.dataset.className;
@@ -1671,7 +1760,7 @@
     // Dirección de la fecha: 'asc' = más antiguas primero, 'desc' = más recientes primero.
     // Se recuerda entre visitas igual que el modo de orden.
     function getQuizSortDirection() {
-        return localStorage.getItem('zipgrade_toolkit_quiz_sort_dir') === 'desc' ? 'desc' : 'asc';
+        return zgStorage.get(ZG_STORAGE_KEYS.quizSortDir) === 'desc' ? 'desc' : 'asc';
     }
 
     function updateQuizSortDirButton() {
@@ -1701,7 +1790,7 @@
     function handleQuizSortDirClick(e) {
         if (e) e.preventDefault();
         const next = getQuizSortDirection() === 'asc' ? 'desc' : 'asc';
-        localStorage.setItem('zipgrade_toolkit_quiz_sort_dir', next);
+        zgStorage.set(ZG_STORAGE_KEYS.quizSortDir, next);
         updateQuizSortDirButton();
         applyQuizzesSort();
     }
@@ -1710,7 +1799,7 @@
         const tableWrapper = document.getElementById('quizTable_wrapper') || document.getElementById('quizTable');
         if (!tableWrapper) return;
 
-        const savedMode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+        const savedMode = zgStorage.get(ZG_STORAGE_KEYS.quizSortMode, 'date-class');
 
         // Card del toolkit (mismo estilo que en /classes/)
         let card = document.getElementById('zg-quiz-top-bar');
@@ -1826,7 +1915,7 @@
             btnClass.dataset.zgBound = 'true';
             btnClass.addEventListener('click', (e) => {
                 e.preventDefault();
-                localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'class-date');
+                zgStorage.set(ZG_STORAGE_KEYS.quizSortMode, 'class-date');
                 syncSortModeUI('class-date');
                 applyQuizzesSort();
             });
@@ -1835,7 +1924,7 @@
             btnDate.dataset.zgBound = 'true';
             btnDate.addEventListener('click', (e) => {
                 e.preventDefault();
-                localStorage.setItem('zipgrade_toolkit_quiz_sort_mode', 'date-class');
+                zgStorage.set(ZG_STORAGE_KEYS.quizSortMode, 'date-class');
                 syncSortModeUI('date-class');
                 applyQuizzesSort();
             });
@@ -1894,7 +1983,7 @@
         const table = document.getElementById('quizTable');
         if (!table) return;
 
-        const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+        const mode = zgStorage.get(ZG_STORAGE_KEYS.quizSortMode, 'date-class');
         const dir = getQuizSortDirection();
 
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
@@ -1991,7 +2080,7 @@
             }
         });
 
-        const mode = localStorage.getItem('zipgrade_toolkit_quiz_sort_mode') || 'date-class';
+        const mode = zgStorage.get(ZG_STORAGE_KEYS.quizSortMode, 'date-class');
         const dir = getQuizSortDirection();
 
         if (typeof window.jQuery !== 'undefined' && window.jQuery.fn && window.jQuery.fn.DataTable && window.jQuery.fn.DataTable.isDataTable(table)) {
@@ -2042,7 +2131,7 @@
 
     async function getClassStudentCountMap() {
         if (zgClassStudentCountCache) return zgClassStudentCountCache;
-        const cached = zgCacheGet('zg_class_map', ZG_CLASSMAP_CACHE_TTL_MS);
+        const cached = zgCacheGet(ZG_STORAGE_KEYS.classMap, ZG_CLASSMAP_CACHE_TTL_MS);
         if (cached && Object.keys(cached).length > 0) {
             zgClassStudentCountCache = cached;
             return cached;
@@ -2090,7 +2179,7 @@
         }
         if (ok && Object.keys(map).length > 0) {
             zgClassStudentCountCache = map;
-            zgCacheSet('zg_class_map', map);
+            zgCacheSet(ZG_STORAGE_KEYS.classMap, map);
         }
         return map;
     }
@@ -2125,7 +2214,7 @@
     // bypassCache: recarga forzada (botón de refresco) ignorando la caché de estado.
     async function fetchQuizStatus(quizAllBaseUrl, bypassCache) {
         const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
-        const cacheKey = quizId ? 'zg_status_' + quizId : null;
+        const cacheKey = quizId ? ZG_STORAGE_KEYS.statusPrefix + quizId : null;
         if (cacheKey && !bypassCache) {
             const cached = zgCacheGet(cacheKey, ZG_STATUS_CACHE_TTL_MS);
             if (cached !== null && cached !== undefined) return cached;
@@ -2354,14 +2443,7 @@
 
     // Limpia la caché de estado de todos los quizzes (para forzar la recarga)
     function clearQuizStatusCache() {
-        try {
-            const toRemove = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                if (k && k.indexOf('zg_status_') === 0) toRemove.push(k);
-            }
-            toRemove.forEach(k => localStorage.removeItem(k));
-        } catch (e) { /* ignore */ }
+        zgStorage.keys(ZG_STORAGE_KEYS.statusPrefix).forEach(key => zgStorage.remove(key));
         zgRawPageCache.clear();
     }
 
@@ -2384,9 +2466,7 @@
             const quizAllBaseUrl = new URL(link.getAttribute('href'), window.location.origin).pathname;
             const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
             if (quizId) {
-                try {
-                    localStorage.removeItem('zg_status_' + quizId);
-                } catch (e) { /* ignore */ }
+                zgStorage.remove(ZG_STORAGE_KEYS.statusPrefix + quizId);
             }
             zgRawPageCache.delete(quizAllBaseUrl);
 
@@ -2784,17 +2864,13 @@
         // Timeout explícito: sin esto, si el servidor no responde la celda
         // queda pegada en "Subiendo ..." indefinidamente.
         const doFetch = async (url, options, timeoutMs, phase) => {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
             try {
-                return await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal });
+                return await zgFetch(url, options, timeoutMs);
             } catch (e) {
                 if (e && e.name === 'AbortError') {
                     throw new Error(`Tiempo de espera agotado al ${phase} (${Math.round(timeoutMs / 1000)}s). Inténtalo de nuevo.`);
                 }
                 throw new Error('Error de red al ' + phase + ': ' + (e && e.message ? e.message : e));
-            } finally {
-                clearTimeout(timer);
             }
         };
 
@@ -2901,10 +2977,8 @@
 
     // Consulta el editor de key de un quiz para saber si tiene respuestas cargadas.
     async function fetchQuizKeyStatus(quizId, diagnose) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 20000);
         try {
-            const resp = await fetch(`/quiz/${quizId}/edit/key/0/?subjectGuid=all`, { credentials: 'same-origin', signal: controller.signal });
+            const resp = await zgFetch(`/quiz/${quizId}/edit/key/0/?subjectGuid=all`, {}, 20000);
             if (!resp.ok) {
                 if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ': HTTP ' + resp.status);
                 return null;
@@ -2934,8 +3008,6 @@
             if (diagnose) console.info('🔍 [ZipGrade] DIAG key ' + quizId + ' error:', e);
             console.warn('⚠️ [ZipGrade] No se pudo verificar la key del quiz ' + quizId + ':', e);
             return null;
-        } finally {
-            clearTimeout(timer);
         }
     }
 
@@ -3173,6 +3245,106 @@
         return { formAction, formFields, csrfToken, sourceDateIso, formClassValues };
     }
 
+    // ==========================================
+    // 6.2.0.1. HELPERS COMPARTIDOS DE MODALES Y FORMULARIOS
+    // ==========================================
+    // Genera los botones del pie de un modal con el estilo del toolkit.
+    function zgBuildModalActions(actions = []) {
+        return actions.map(action => {
+            const classes = ['zg-btn'];
+            if (action.primary) classes.push('zg-btn-primary');
+            if (action.variant) classes.push(action.variant);
+            const dataCancel = action.cancel ? ' data-zg-modal-cancel="true"' : '';
+            const disabled = action.disabled ? ' disabled' : '';
+            const icon = action.icon ? `<i class="fa ${action.icon}"></i> ` : '';
+            return `<button id="${action.id}" type="button" class="${classes.join(' ')}"${dataCancel}${disabled} style="${action.style || ''}">${icon}${action.label || ''}</button>`;
+        }).join('');
+    }
+
+    // Crea la estructura estándar de un modal (overlay + card + cabecera + cuerpo + pie).
+    // Devuelve { overlay, modal, close }; `close()` es idempotente y dispara onClose.
+    function zgCreateModal(options = {}) {
+        const {
+            title = '',
+            icon = 'fa-cog',
+            description = '',
+            width = 480,
+            maxWidth = '94vw',
+            maxHeight = '',
+            bodyHtml = '',
+            actions = [],
+            bodyGap = 12,
+            onClose = null
+        } = options;
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:' + width + 'px; max-width:' + maxWidth + ';'
+            + (maxHeight ? ' max-height:' + maxHeight + '; display:flex; flex-direction:column;' : '')
+            + ' box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+
+        const shrink = maxHeight ? ' flex-shrink:0;' : '';
+        const headerStyle = `margin:0 0 ${description ? 6 : 14}px 0; font-size:15px; font-weight:700; color:#1e293b;${shrink}`;
+        modal.innerHTML = `
+            <h4 style="${headerStyle}">
+                <i class="fa ${icon}"></i> ${title}
+            </h4>
+            ${description ? `<p style="margin:0 0 14px 0; font-size:12px; color:#64748b; line-height:1.5;${shrink}">${description}</p>` : ''}
+            <div class="zg-modal-body" style="display:flex; flex-direction:column; gap:${bodyGap}px;${maxHeight ? ' flex:1; min-height:0;' : ''}">${bodyHtml}</div>
+            ${actions.length ? `<div class="zg-modal-footer" style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-shrink:0;">${zgBuildModalActions(actions)}</div>` : ''}
+        `;
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            overlay.remove();
+            if (onClose) onClose();
+        };
+
+        modal.querySelectorAll('[data-zg-modal-cancel]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
+                close();
+            });
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        return { overlay, modal, close };
+    }
+
+    // Envía un formulario urlencoded con CSRF/campos y devuelve un resultado uniforme.
+    // Unifica los POST de copiar/editar/copiar-en-lote que antes repetían fetch + FormData.
+    async function zgSubmitForm(url, fields = {}, options = {}) {
+        const { timeoutMs = 60000, method = 'POST' } = options;
+        const params = new URLSearchParams();
+        Object.entries(fields).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            if (Array.isArray(value)) value.forEach(item => params.append(key, item));
+            else params.append(key, value);
+        });
+
+        const response = await zgFetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        }, timeoutMs);
+
+        const match = response.url ? response.url.match(/\/quiz\/([^/]+)\/all\//) : null;
+        return {
+            ok: response.ok,
+            status: response.status,
+            url: response.url,
+            newQuizId: match ? match[1] : null,
+            response
+        };
+    }
+
     // Modal para copiar un quiz desde la tabla /quizzes/
     async function showCopyQuizModal(quizAllBaseUrl, quizName) {
         let formAction = null;
@@ -3186,29 +3358,24 @@
         // Quitar la palabra "Template" del inicio del nombre sugerido
         suggestedName = suggestedName.replace(/^\s*Template\s+/i, '').replace(/\s+/g, ' ').trim();
 
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-        const modal = document.createElement('div');
-        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:480px; max-width:94vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-        modal.innerHTML = `
-            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-copy"></i> Copiar quiz</h4>
-            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se crearán copias de "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".<br />En cada fila marca una o varias clases: se crea una copia por cada clase marcada, insertando el curso de la clase en el nombre (ej: "E.S.A. | 601 | P3 | S1").<br />Si no marcas ninguna clase, se crea una sola copia con el nombre tal cual.</p>
-            <div style="display:flex; flex-direction:column; gap:12px;">
+        const { modal, close: cleanup } = zgCreateModal({
+            title: 'Copiar quiz',
+            icon: 'fa-copy',
+            width: 480,
+            description: `Se crearán copias de "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".<br />En cada fila marca una o varias clases: se crea una copia por cada clase marcada, insertando el curso de la clase en el nombre (ej: "E.S.A. | 601 | P3 | S1").<br />Si no marcas ninguna clase, se crea una sola copia con el nombre tal cual.`,
+            bodyHtml: `
                 <div>
                     <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 6px 0;">Copias a crear:</label>
                     <div id="zg-copy-slots" style="display:flex; flex-direction:column; gap:8px; max-height:300px; overflow-y:auto;"></div>
                 </div>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-copy-cancel" type="button" class="zg-btn">Cancelar</button>
-                <button id="zg-copy-accept" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-copy"></i> Copiar</button>
-            </div>
-        `;
-        overlay.appendChild(modal);
-        document.body.appendChild(overlay);
+            `,
+            actions: [
+                { id: 'zg-copy-cancel', label: 'Cancelar', cancel: true },
+                { id: 'zg-copy-accept', label: 'Copiar', icon: 'fa-copy', primary: true }
+            ]
+        });
 
         const acceptBtn = modal.querySelector('#zg-copy-accept');
-        const cancelBtn = modal.querySelector('#zg-copy-cancel');
         const slotsBox = modal.querySelector('#zg-copy-slots');
 
         // Crea una fila de copia: nombre + clases respectivas (marca varias, se crea una copia por clase)
@@ -3323,9 +3490,6 @@
         acceptBtn.style.opacity = '0.5';
         acceptBtn.title = 'Cargando información del quiz...';
 
-        const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
         const firstSlotName = slotsBox.querySelector('.zg-copy-slot-name');
         if (firstSlotName) { firstSlotName.focus(); firstSlotName.select(); }
 
@@ -3364,26 +3528,18 @@
             const created = [];
             for (const copy of copies) {
                 try {
-                    const params = new URLSearchParams();
-                    Object.entries(formFields).forEach(([k, v]) => params.append(k, v));
-                    params.append('newQuizName', copy.name);
-                    copy.classes.forEach(c => params.append('classList', c));
-
-                    const saveResp = await fetch(formAction, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: params.toString(),
-                        credentials: 'include'
+                    const save = await zgSubmitForm(formAction, {
+                        ...formFields,
+                        newQuizName: copy.name,
+                        classList: copy.classes
                     });
 
-                    if (!saveResp.ok) {
-                        console.warn('⚠️ [ZipGrade] No se pudo copiar "' + copy.name + '" (HTTP ' + saveResp.status + ').');
+                    if (!save.ok) {
+                        console.warn('⚠️ [ZipGrade] No se pudo copiar "' + copy.name + '" (HTTP ' + save.status + ').');
                         continue;
                     }
 
-                    // Si ZipGrade redirige al detalle del nuevo quiz, capturar su id
-                    const newQuizMatch = saveResp.url.match(/\/quiz\/([^/]+)\/all\//);
-                    created.push({ quizId: newQuizMatch ? newQuizMatch[1] : null, copy });
+                    created.push({ quizId: save.newQuizId, copy });
                 } catch (err) {
                     console.error('❌ [ZipGrade] Error al copiar quiz:', err);
                 }
@@ -3600,44 +3756,42 @@
             return;
         }
 
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-        const modal = document.createElement('div');
-        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:660px; max-width:96vw; max-height:92vh; display:flex; flex-direction:column; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-        modal.innerHTML = `
-            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b; flex-shrink:0;"><i class="fa fa-copy"></i> Copiar quizzes seleccionados</h4>
-            <p style="margin:0 0 10px 0; font-size:12px; color:#64748b; flex-shrink:0;">Por cada quiz, marca una o varias clases — se crea una copia aparte por cada clase marcada. El <strong style="color:#7c3aed;">checkbox ✨ Auto-siguiente</strong> pre-selecciona la clase siguiente a la que tenía el quiz.</p>
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:7px 12px; flex-shrink:0; flex-wrap:wrap; gap:6px;">
-                <label style="font-weight:600; font-size:12px; color:#334155; margin:0; white-space:nowrap;"><i class="fa fa-magic"></i> Aplicar clase a todos:</label>
-                <select id="zg-bulk-copy-apply-all" disabled style="flex:1; min-width:140px; padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff;">
-                    <option value="">Cargando clases...</option>
-                </select>
-                <button id="zg-bulk-auto-next-all" type="button" disabled class="zg-btn zg-btn-sm zg-btn-soft-violet" style="white-space:nowrap;">&#10024; Auto-sig. a todos</button>
-            </div>
-            <div id="zg-bulk-copy-rows" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; min-height:0;"></div>
-            <div id="zg-bulk-copy-progress" style="display:none; flex-direction:column; gap:4px; margin-top:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; flex-shrink:0;">
-                <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:600; color:#334155;">
-                    <span id="zg-bulk-copy-progress-title">Copiando...</span>
-                    <span id="zg-bulk-copy-progress-percent">0%</span>
+        const { modal, close: cleanup } = zgCreateModal({
+            title: 'Copiar quizzes seleccionados',
+            icon: 'fa-copy',
+            width: 660,
+            maxWidth: '96vw',
+            maxHeight: '92vh',
+            bodyGap: 10,
+            description: `Por cada quiz, marca una o varias clases — se crea una copia aparte por cada clase marcada. El <strong style="color:#7c3aed;">checkbox ✨ Auto-siguiente</strong> pre-selecciona la clase siguiente a la que tenía el quiz.`,
+            bodyHtml: `
+                <div style="display:flex; align-items:center; gap:6px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:7px 12px; flex-shrink:0; flex-wrap:wrap;">
+                    <label style="font-weight:600; font-size:12px; color:#334155; margin:0; white-space:nowrap;"><i class="fa fa-magic"></i> Aplicar clase a todos:</label>
+                    <select id="zg-bulk-copy-apply-all" class="zg-select" disabled style="flex:1; min-width:140px;">
+                        <option value="">Cargando clases...</option>
+                    </select>
+                    <button id="zg-bulk-auto-next-all" type="button" disabled class="zg-btn zg-btn-sm zg-btn-soft-violet" style="white-space:nowrap;">&#10024; Auto-sig. a todos</button>
                 </div>
-                <div style="width:100%; background:#cbd5e1; height:8px; border-radius:4px; overflow:hidden;">
-                    <div id="zg-bulk-copy-progress-bar" style="width:0%; background:#7c3aed; height:100%; transition:width 0.3s ease;"></div>
+                <div id="zg-bulk-copy-rows" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; min-height:0;"></div>
+                <div id="zg-bulk-copy-progress" style="display:none; flex-direction:column; gap:4px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; flex-shrink:0;">
+                    <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:600; color:#334155;">
+                        <span id="zg-bulk-copy-progress-title">Copiando...</span>
+                        <span id="zg-bulk-copy-progress-percent">0%</span>
+                    </div>
+                    <div style="width:100%; background:#cbd5e1; height:8px; border-radius:4px; overflow:hidden;">
+                        <div id="zg-bulk-copy-progress-bar" style="width:0%; background:#7c3aed; height:100%; transition:width 0.3s ease;"></div>
+                    </div>
                 </div>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-shrink:0;">
-                <button id="zg-bulk-copy-cancel" type="button" class="zg-btn">Cancelar</button>
-                <button id="zg-bulk-copy-accept" type="button" class="zg-btn zg-btn-primary" disabled><i class="fa fa-copy"></i> Copiar</button>
-            </div>
-        `;
-        overlay.appendChild(modal);
-        document.body.appendChild(overlay);
+            `,
+            actions: [
+                { id: 'zg-bulk-copy-cancel', label: 'Cancelar', cancel: true },
+                { id: 'zg-bulk-copy-accept', label: 'Copiar', icon: 'fa-copy', primary: true, disabled: true }
+            ]
+        });
 
         const rowsBox = modal.querySelector('#zg-bulk-copy-rows');
         const acceptBtn = modal.querySelector('#zg-bulk-copy-accept');
         const cancelBtn = modal.querySelector('#zg-bulk-copy-cancel');
-        const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 
         const computeCopyName = (quizName, className) => {
             const baseName = (adjustQuizNameFormat(quizName.trim()) || quizName.trim())
@@ -3948,27 +4102,20 @@
                 try {
                     const copyName = computeCopyName(quiz.quizName, text);
                     const copyInfo = await loadQuizCopyForm(quiz.quizAllBaseUrl);
-                    const params = new URLSearchParams();
-                    Object.entries(copyInfo.formFields).forEach(([k, v]) => params.append(k, v));
-                    params.append('newQuizName', copyName);
-                    params.append('classList', value);
 
-                    const saveResp = await fetch(copyInfo.formAction, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: params.toString(),
-                        credentials: 'include'
+                    const save = await zgSubmitForm(copyInfo.formAction, {
+                        ...copyInfo.formFields,
+                        newQuizName: copyName,
+                        classList: [value]
                     });
-                    if (!saveResp.ok) {
-                        fails.push(`${quiz.quizName} → ${text} (HTTP ${saveResp.status})`);
+                    if (!save.ok) {
+                        fails.push(`${quiz.quizName} → ${text} (HTTP ${save.status})`);
                         continue;
                     }
 
-                    const newQuizMatch = saveResp.url.match(/\/quiz\/([^/]+)\/all\//);
-                    const newQuizId = newQuizMatch ? newQuizMatch[1] : null;
                     created++;
-                    if (newQuizId) {
-                        const ok = await applyCopySettingsToQuiz(newQuizId, copyInfo.sourceDateIso || '', [value]);
+                    if (save.newQuizId) {
+                        const ok = await applyCopySettingsToQuiz(save.newQuizId, copyInfo.sourceDateIso || '', [value]);
                         if (ok) applied++;
                     }
                 } catch (err) {
@@ -4009,14 +4156,12 @@
         let quizDateVal = '';
         const classItems = [];
 
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-        const modal = document.createElement('div');
-        modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:540px; max-width:94vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-        modal.innerHTML = `
-            <h4 style="margin:0 0 6px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-pencil"></i> Editar quiz</h4>
-            <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Editando "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".</p>
-            <div style="display:flex; flex-direction:column; gap:12px;">
+        const { modal, close: cleanup } = zgCreateModal({
+            title: 'Editar quiz',
+            icon: 'fa-pencil',
+            width: 540,
+            description: `Editando "<strong style="color:#334155;">${escapeHtml(quizName)}</strong>".`,
+            bodyHtml: `
                 <div>
                     <label style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Nombre del quiz</label>
                     <input id="zg-edit-name-input" type="text" class="zg-input" value="${escapeHtml(quizName)}" style="width:100%; box-sizing:border-box;" />
@@ -4045,14 +4190,12 @@
                     <label for="zg-edit-classes" style="display:block; font-weight:600; font-size:12px; color:#334155; margin:0 0 4px 0;">Clases</label>
                     <div id="zg-edit-classes" style="max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; background:#f8fafc;"></div>
                 </div>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-                <button id="zg-edit-cancel" type="button" class="zg-btn">Cancelar</button>
-                <button id="zg-edit-save" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-save"></i> Guardar</button>
-            </div>
-        `;
-        overlay.appendChild(modal);
-        document.body.appendChild(overlay);
+            `,
+            actions: [
+                { id: 'zg-edit-cancel', label: 'Cancelar', cancel: true },
+                { id: 'zg-edit-save', label: 'Guardar', icon: 'fa-save', primary: true }
+            ]
+        });
 
         const nameInput = modal.querySelector('#zg-edit-name-input');
         const asSelect = modal.querySelector('#zg-edit-answer-sheet');
@@ -4186,11 +4329,6 @@
             }
         }
 
-        const cancelBtn = modal.querySelector('#zg-edit-cancel');
-        const cleanup = () => overlay.remove();
-        cancelBtn.addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(); });
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
-
         saveBtn.addEventListener('click', async (e) => {
             if (e) { e.preventDefault(); e.stopPropagation(); }
             const nameVal = nameInput.value.trim();
@@ -4203,28 +4341,21 @@
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Guardando...';
             try {
-                const params = new URLSearchParams();
-                params.append('quizName', nameVal);
-                params.append('answerSheet', asSelect.value || '');
-                params.append('quizDate', dateInput.value || '');
-                params.append('folder', folderSelEl.value || '');
-                if (csrfToken) params.append('csrf_token', csrfToken);
-                classesBox.querySelectorAll('input[name="classList"]:checked').forEach(cb => {
-                    params.append('classList', cb.value);
+                const classList = Array.from(classesBox.querySelectorAll('input[name="classList"]:checked')).map(cb => cb.value);
+                const save = await zgSubmitForm(editUrl, {
+                    quizName: nameVal,
+                    answerSheet: asSelect.value || '',
+                    quizDate: dateInput.value || '',
+                    folder: folderSelEl.value || '',
+                    csrf_token: csrfToken || undefined,
+                    classList
                 });
 
-                const saveResp = await fetch(editUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: params.toString(),
-                    credentials: 'include'
-                });
-
-                if (saveResp.ok) {
+                if (save.ok) {
                     cleanup();
                     window.location.reload();
                 } else {
-                    alert('No se pudo guardar los cambios (HTTP ' + saveResp.status + ').');
+                    alert('No se pudo guardar los cambios (HTTP ' + save.status + ').');
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i class="fa fa-save"></i> Guardar';
                 }
@@ -4709,6 +4840,28 @@
         }
     }
 
+    // Re-render de todos los widgets de /quizzes/ (idempotente).
+    // Centraliza la secuencia que antes estaba copiada 4 veces.
+    function zgRefreshQuizWidgets() {
+        translateQuizHeaders();
+        createQuizzesSortControls();
+        sortQuizTable();
+        initQuizzesResultsColumn();
+        initQuizStatusColumn();
+        initQuizKeyColumn();
+        initQuizActionsColumn();
+    }
+
+    // Solo columnas: se usa tras un redibujado de DataTables (no reordena para evitar bucles).
+    function zgRefreshQuizColumns() {
+        translateQuizHeaders();
+        initQuizzesResultsColumn();
+        initQuizStatusColumn();
+        initQuizKeyColumn();
+        initQuizActionsColumn();
+        disableQuizCustomColumnsSort();
+    }
+
     function initQuizzesPage() {
         translateQuizHeaders();
         createQuizzesSortControls();
@@ -4727,24 +4880,8 @@
             statusLoadPromise.then(() => warmQuizClassListCache(firstQuizAllBaseUrl));
         }
 
-        setTimeout(() => {
-            translateQuizHeaders();
-            createQuizzesSortControls();
-            sortQuizTable();
-            initQuizzesResultsColumn();
-            initQuizStatusColumn();
-            initQuizKeyColumn();
-            initQuizActionsColumn();
-        }, 400);
-        setTimeout(() => {
-            translateQuizHeaders();
-            createQuizzesSortControls();
-            sortQuizTable();
-            initQuizzesResultsColumn();
-            initQuizStatusColumn();
-            initQuizKeyColumn();
-            initQuizActionsColumn();
-        }, 1000);
+        setTimeout(zgRefreshQuizWidgets, 400);
+        setTimeout(zgRefreshQuizWidgets, 1000);
 
         // Re-insertar las columnas personalizadas si DataTables redibuja la tabla (ordenar, filtrar, paginar)
         const tbody = document.querySelector('#quizTable tbody');
@@ -4753,12 +4890,7 @@
             window._zgQuizTableObserver = new MutationObserver(() => {
                 if (reinsertTimer) clearTimeout(reinsertTimer);
                 reinsertTimer = setTimeout(() => {
-                    translateQuizHeaders();
-                    initQuizzesResultsColumn();
-                    initQuizStatusColumn();
-                    initQuizKeyColumn();
-                    initQuizActionsColumn();
-                    disableQuizCustomColumnsSort();
+                    zgRefreshQuizColumns();
                 }, 150);
             });
             window._zgQuizTableObserver.observe(tbody, { childList: true });
@@ -5085,7 +5217,7 @@
         const editUrl = `/quiz/${quizId}/edit/`;
 
         try {
-            const resp = await fetch(editUrl);
+            const resp = await zgFetch(editUrl, {}, 45000);
             if (!resp.ok) throw new Error("HTTP " + resp.status);
             const html = await resp.text();
 
@@ -5099,31 +5231,20 @@
             const csrfToken = doc.querySelector('input[name="csrf_token"]')?.value || '';
             const classInputs = Array.from(doc.querySelectorAll('input[name="classList"]:checked'));
 
-            const params = new URLSearchParams();
-            params.append('quizName', adjustedQuizName);
-            params.append('answerSheet', answerSheet);
-            if (targetDate) params.append('quizDate', targetDate); // Asignar fecha heredada
-            params.append('folder', folder);
-            params.append('csrf_token', csrfToken);
+            const classList = (targetClasses && targetClasses.length)
+                ? targetClasses
+                : classInputs.map(inp => inp.value);
 
-            if (targetClasses && targetClasses.length) {
-                // Usar las clases indicadas al copiar
-                targetClasses.forEach(c => params.append('classList', c));
-            } else {
-                classInputs.forEach(inp => {
-                    params.append('classList', inp.value);
-                });
-            }
-
-            const saveResp = await fetch(editUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: params.toString()
+            const save = await zgSubmitForm(editUrl, {
+                quizName: adjustedQuizName,
+                answerSheet,
+                quizDate: targetDate || undefined,
+                folder,
+                csrf_token: csrfToken,
+                classList
             });
 
-            return saveResp.ok;
+            return save.ok;
         } catch (e) {
             console.error("Error al actualizar el quiz copiado:", e);
             return false;
@@ -5191,7 +5312,7 @@
     // Obtiene los formatos de exportación personalizados del quiz actual
     async function fetchCustomExportFormats(quizAllBaseUrl, bypassCache) {
         const quizId = (quizAllBaseUrl.match(/\/quiz\/([^/]+)\/all\//) || [])[1];
-        const cacheKey = quizId ? 'zg_formats_' + quizId : null;
+        const cacheKey = quizId ? ZG_STORAGE_KEYS.formatsPrefix + quizId : null;
         if (cacheKey && !bypassCache) {
             const cached = zgCacheGet(cacheKey, ZG_FORMATS_CACHE_TTL_MS);
             if (cached !== null && cached !== undefined) return cached;
@@ -5256,15 +5377,21 @@
     // Modal simple para elegir formato/tipo cuando hay más de uno
     function showExportFormatChooser(formats) {
         return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-            const modal = document.createElement('div');
-            modal.style.cssText = 'background:#fff; border-radius:12px; padding:20px 24px; width:420px; max-width:92vw; box-shadow:0 20px 50px rgba(0,0,0,0.35); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-            modal.innerHTML = `
-                <h4 style="margin:0 0 4px 0; font-size:15px; font-weight:700; color:#1e293b;"><i class="fa fa-floppy-o"></i> Descarga personalizada de resultados</h4>
-                <p style="margin:0 0 14px 0; font-size:12px; color:#64748b;">Se encontraron ${formats.length} descargas personalizadas. Elige cuál exportar:</p>
-                <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
-                    <select id="zg-export-format-select" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #cbd5e1; border-radius:8px; background:#fff;">
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+
+            const { modal, close } = zgCreateModal({
+                title: 'Descarga personalizada de resultados',
+                icon: 'fa-floppy-o',
+                width: 420,
+                maxWidth: '92vw',
+                description: `Se encontraron ${formats.length} descargas personalizadas. Elige cuál exportar:`,
+                bodyHtml: `
+                    <select id="zg-export-format-select" class="zg-select" style="width:100%;">
                         ${formats.map((f, i) => `<option value="${i}">${f.name}</option>`).join('')}
                     </select>
                     <div style="display:flex; gap:14px; align-items:center; font-size:12px; color:#334155;">
@@ -5272,23 +5399,20 @@
                         <label style="margin:0; font-weight:500;"><input type="radio" name="zg-export-type" value="XLSX" checked> Excel (XLSX)</label>
                         <label style="margin:0; font-weight:500;"><input type="radio" name="zg-export-type" value="CSV"> CSV</label>
                     </div>
-                </div>
-                <div style="display:flex; justify-content:flex-end; gap:8px;">
-                    <button id="zg-export-cancel" type="button" class="zg-btn">Cancelar</button>
-                    <button id="zg-export-accept" type="button" class="zg-btn zg-btn-primary"><i class="fa fa-download"></i> Descargar</button>
-                </div>
-            `;
-            overlay.appendChild(modal);
-            document.body.appendChild(overlay);
+                `,
+                actions: [
+                    { id: 'zg-export-cancel', label: 'Cancelar', cancel: true },
+                    { id: 'zg-export-accept', label: 'Descargar', icon: 'fa-download', primary: true }
+                ],
+                onClose: () => finish(null)
+            });
 
-            const cleanup = (val) => { overlay.remove(); resolve(val); };
-            modal.querySelector('#zg-export-cancel').addEventListener('click', (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } cleanup(null); });
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
             modal.querySelector('#zg-export-accept').addEventListener('click', (e) => {
                 if (e) { e.preventDefault(); e.stopPropagation(); }
                 const idx = parseInt(modal.querySelector('#zg-export-format-select').value, 10);
                 const type = modal.querySelector('input[name="zg-export-type"]:checked')?.value || 'XLSX';
-                cleanup({ format: formats[idx], type });
+                finish({ format: formats[idx], type });
+                close();
             });
         });
     }
@@ -5431,6 +5555,30 @@
         initMissingStudentsInQuizDetail();
     }
 
+    // Construye el texto plano que se copia al portapapeles. Función pura (sin DOM)
+    // para poder probarse y mantener el handler del botón libre de lógica de formato.
+    function buildNoveltiesReport(displayClassName, noveltiesList, missingCount, anomalyCount) {
+        const total = noveltiesList.length;
+        const missingLabel = missingCount === 1 ? 'faltante' : 'faltantes';
+        const anomalyLabel = anomalyCount === 1 ? 'sobrante' : 'sobrantes';
+        const lines = [
+            `📋 NOVEDADES DEL QUIZ — Curso: ${displayClassName} (${total} ${total === 1 ? 'novedad' : 'novedades'})`,
+            `Resumen: ${missingCount} ${missingLabel} · ${anomalyCount} ${anomalyLabel}`,
+            '────────────────────────────',
+            ...noveltiesList.map((item, i) => {
+                const icon = item.type === 'FALTA'
+                    ? '❌'
+                    : (item.type.includes('Doble') ? '🔁' : '⚠️');
+                const classPart = (item.className && item.className !== displayClassName && item.className !== 'Ajeno')
+                    ? ` · Curso ${item.className}`
+                    : '';
+                const idPart = item.id && item.id !== '-' ? ` · ID ${item.id}` : '';
+                return `${i + 1}. ${icon} ${item.name}${idPart}${classPart}\n   ${item.reason}`;
+            })
+        ];
+        return lines.join('\n');
+    }
+
     // ==========================================
     // 6.6. ESTUDIANTES FALTANTES EN DETALLE DEL QUIZ (/quiz/.../all/)
     // ==========================================
@@ -5468,7 +5616,7 @@
         if (classObjs.length === 0) return [];
 
         const normTargetNames = classObjs.map(n => normalizeClassName(n.name));
-        const cacheKey = 'zg_roster_' + normTargetNames.sort().join('_');
+        const cacheKey = ZG_STORAGE_KEYS.rosterPrefix + normTargetNames.sort().join('_');
         if (!bypassCache) {
             const cached = zgCacheGet(cacheKey, ZG_ROSTER_CACHE_TTL_MS);
             if (cached && Array.isArray(cached) && cached.length > 0) {
@@ -5614,7 +5762,7 @@
     }
 
     async function fetchAllStudentsDirectory(bypassCache = false) {
-        const cacheKey = 'zg_all_students_dir';
+        const cacheKey = ZG_STORAGE_KEYS.allStudentsDir;
         if (!bypassCache) {
             const cached = zgCacheGet(cacheKey, ZG_ROSTER_CACHE_TTL_MS);
             if (cached && Array.isArray(cached) && cached.length > 0) {
@@ -6228,25 +6376,12 @@
                         const copyBtn = container.querySelector('#zg-copy-novelties-btn');
                         if (copyBtn) {
                             copyBtn.addEventListener('click', () => {
-                                const total = noveltiesList.length;
-                                const missingLabel = missingStudents.length === 1 ? 'faltante' : 'faltantes';
-                                const anomalyLabel = anomalies.length === 1 ? 'sobrante' : 'sobrantes';
-                                const lines = [
-                                    `📋 NOVEDADES DEL QUIZ — Curso: ${displayClassName} (${total} ${total === 1 ? 'novedad' : 'novedades'})`,
-                                    `Resumen: ${missingStudents.length} ${missingLabel} · ${anomalies.length} ${anomalyLabel}`,
-                                    '────────────────────────────',
-                                    ...noveltiesList.map((item, i) => {
-                                        const icon = item.type === 'FALTA'
-                                            ? '❌'
-                                            : (item.type.includes('Doble') ? '🔁' : '⚠️');
-                                        const classPart = (item.className && item.className !== displayClassName && item.className !== 'Ajeno')
-                                            ? ` · Curso ${item.className}`
-                                            : '';
-                                        const idPart = item.id && item.id !== '-' ? ` · ID ${item.id}` : '';
-                                        return `${i + 1}. ${icon} ${item.name}${idPart}${classPart}\n   ${item.reason}`;
-                                    })
-                                ];
-                                const textToCopy = lines.join('\n');
+                                const textToCopy = buildNoveltiesReport(
+                                    displayClassName,
+                                    noveltiesList,
+                                    missingStudents.length,
+                                    anomalies.length
+                                );
                                 navigator.clipboard.writeText(textToCopy).then(() => {
                                     showZgToast(`Se copiaron ${noveltiesList.length} novedades al portapapeles.`, 'success');
                                 }).catch(() => {
@@ -7692,13 +7827,13 @@
 
             // Persistir selector de sesión en localStorage y recargar asignaciones
             const sessionSelect = document.getElementById('zg-global-session');
-            const savedSession = localStorage.getItem('zipgrade_toolkit_session');
+            const savedSession = zgStorage.get(ZG_STORAGE_KEYS.session);
             if (savedSession && sessionSelect) {
                 sessionSelect.value = savedSession;
             }
             if (sessionSelect) {
                 sessionSelect.addEventListener('change', () => {
-                    localStorage.setItem('zipgrade_toolkit_session', sessionSelect.value);
+                    zgStorage.set(ZG_STORAGE_KEYS.session, sessionSelect.value);
                     loadSavedMappingsFromStorage();
                 });
             }
@@ -8223,7 +8358,7 @@
 
         const bodyStr = formData.toString();
 
-        // Intentar con fetch (credentials: 'include' para cookies de sesión)
+        // Intentar con fetch (zgFetch ya incluye cookies same-origin)
         const result = await attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs);
         if (result === 'RETRY_GM') {
             // Fallback: GM_xmlhttpRequest
@@ -8234,22 +8369,16 @@
     }
 
     async function attemptFetchPDF(postUrl, bodyStr, refererUrl, className, timeoutMs) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
         try {
-            const resp = await fetch(postUrl, {
+            const resp = await zgFetch(postUrl, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Referer": refererUrl,
                     "Origin": "https://www.zipgrade.com"
                 },
-                body: bodyStr,
-                credentials: 'include',
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
+                body: bodyStr
+            }, timeoutMs);
 
             if (!resp.ok) {
                 console.warn(`⚠️ fetch HTTP ${resp.status} para ${className}`);
@@ -8259,7 +8388,6 @@
             const blob = await resp.blob();
             return validatePDFBlob(blob, className, resp.status);
         } catch (err) {
-            clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
                 console.warn(`⚠️ fetch timeout (${timeoutMs / 1000}s) para ${className}`);
                 return 'RETRY_GM';
@@ -8356,76 +8484,77 @@
         translateGlobalNavMenu();
     };
 
+    // Traducciones tempranas de detalles (se repiten cuando el DOM está listo,
+    // porque DataTables/frameworks pueden pintar tarde).
+    const runEarlyDetailTranslations = () => {
+        const path = window.location.pathname;
+        if (path.includes('/quiz/') && path.includes('/paper/')) {
+            translatePaperDetailPage();
+            initEditResponsesPage();
+        } else if (path.includes('/quiz/') && path.includes('/all/')) {
+            translateQuizDetailPage();
+        }
+    };
+
+    // Registro declarativo de páginas: añadir una ruta = añadir una entrada aquí.
+    // El orden importa: las comprobaciones más específicas van primero.
+    const ZG_PAGE_ROUTES = [
+        {
+            id: 'edit-responses',
+            match: p => p.includes('/quiz/') && p.includes('/paper/'),
+            init: () => {
+                translatePaperDetailPage();
+                initEditResponsesPage();
+            }
+        },
+        {
+            id: 'quiz-detail',
+            match: p => p.includes('/quiz/') && p.includes('/all/') && !p.includes('/paper/'),
+            init: () => {
+                initQuizDetailPage();
+                translateQuizDetailPage();
+                initMissingStudentsInQuizDetail();
+            }
+        },
+        {
+            id: 'quiz-edit',
+            match: p => p.includes('/newQuiz/edit/') || (p.includes('/quiz/') && p.includes('/edit/')),
+            init: initQuizEditPage
+        },
+        {
+            id: 'quizzes',
+            match: p => p.includes('/quizzes'),
+            init: initQuizzesPage
+        },
+        {
+            id: 'students',
+            match: p => p.includes('/students/'),
+            init: initStudentsPage
+        },
+        {
+            id: 'classes',
+            match: p => p.includes('/classes/'),
+            init: initUI
+        }
+    ];
+
     // Ejecución INMEDIATA síncrona para que cuando el navegador pinte el DOM ya esté en español
     runGlobalHeaderTranslation();
-
-    if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
-        translatePaperDetailPage();
-        initEditResponsesPage();
-    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
-        translateQuizDetailPage();
-    }
+    runEarlyDetailTranslations();
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             runGlobalHeaderTranslation();
-            if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
-                translatePaperDetailPage();
-                initEditResponsesPage();
-            } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/')) {
-                translateQuizDetailPage();
-            }
-        });
+            runEarlyDetailTranslations();
+        }, { once: true });
     }
 
     // Re-ejecutar suavemente para atrapar cualquier render tardío de frameworks o DataTables
     setTimeout(runGlobalHeaderTranslation, 150);
     setTimeout(runGlobalHeaderTranslation, 500);
 
-    if (window.location.pathname.includes('/classes/')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initUI);
-        } else {
-            initUI();
-        }
-    } else if (window.location.pathname.includes('/students/')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initStudentsPage);
-        } else {
-            initStudentsPage();
-        }
-    } else if (window.location.pathname.includes('/quizzes')) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizzesPage);
-        } else {
-            initQuizzesPage();
-        }
-    } else if (window.location.pathname.includes('/newQuiz/edit/') || (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/edit/'))) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizEditPage);
-        } else {
-            initQuizEditPage();
-        }
-    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/paper/')) {
-        const initPaper = () => {
-            translatePaperDetailPage();
-            initEditResponsesPage();
-        };
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initPaper);
-        } else {
-            initPaper();
-        }
-    } else if (window.location.pathname.includes('/quiz/') && window.location.pathname.includes('/all/') && !window.location.pathname.includes('/paper/')) {
-        const initQuizDetail = () => {
-            initQuizDetailPage();
-            translateQuizDetailPage();
-            initMissingStudentsInQuizDetail();
-        };
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initQuizDetail);
-        } else {
-            initQuizDetail();
-        }
+    const zgActiveRoute = ZG_PAGE_ROUTES.find(route => route.match(window.location.pathname));
+    if (zgActiveRoute) {
+        zgOnReady(zgActiveRoute.init);
     }
 })();
